@@ -1,0 +1,446 @@
+cities:
+- location_id: nyc_lga
+  icao: KLGA
+  iem_network: NY_ASOS
+  iem_station: LGA
+  timezone: America/New_York
+  temperature_unit: fahrenheit
+  polymarket_slug_city: nyc
+  role: strict
+  rationale: Highest late volume; positive late PnL; resolution station for NYC markets.
+- location_id: miami_mia
+  icao: KMIA
+  iem_network: FL_ASOS
+  iem_station: MIA
+  timezone: America/New_York
+  temperature_unit: fahrenheit
+  polymarket_slug_city: miami
+  role: strict
+  rationale: Best aggregate late/post-noon fill PnL in our tmax data.
+- location_id: dallas_dal
+  icao: KDAL
+  iem_network: TX_ASOS
+  iem_station: DAL
+  timezone: America/Chicago
+  temperature_unit: fahrenheit
+  polymarket_slug_city: dallas
+  role: strict
+  rationale: Post-noon fill PnL strongly positive; huskyvs/KDAL home station; excellent METAR.
+- location_id: atlanta_atl
+  icao: KATL
+  iem_network: GA_ASOS
+  iem_station: ATL
+  timezone: America/New_York
+  temperature_unit: fahrenheit
+  polymarket_slug_city: atlanta
+  role: strict
+  rationale: '#2 late-window PnL; dense ASOS; already in parent locations.'
+- location_id: chicago_ord
+  icao: KORD
+  iem_network: IL_ASOS
+  iem_station: ORD
+  timezone: America/Chicago
+  temperature_unit: fahrenheit
+  polymarket_slug_city: chicago
+  role: strict
+  rationale: Positive late PnL; huskyvs profitable here in-sample.
+- location_id: amsterdam_eham
+  icao: EHAM
+  iem_network: NL__ASOS
+  iem_station: EHAM
+  timezone: Europe/Amsterdam
+  temperature_unit: celsius
+  polymarket_slug_city: amsterdam
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: milan_limc
+  icao: LIMC
+  iem_network: IT__ASOS
+  iem_station: LIMC
+  timezone: Europe/Rome
+  temperature_unit: celsius
+  polymarket_slug_city: milan
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: munich_eddm
+  icao: EDDM
+  iem_network: DE__ASOS
+  iem_station: EDDM
+  timezone: Europe/Berlin
+  temperature_unit: celsius
+  polymarket_slug_city: munich
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: wuhan_zhhh
+  icao: ZHHH
+  iem_network: CN__ASOS
+  iem_station: ZHHH
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: wuhan
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: ankara_ltac
+  icao: LTAC
+  iem_network: TR__ASOS
+  iem_station: LTAC
+  timezone: Europe/Istanbul
+  temperature_unit: celsius
+  polymarket_slug_city: ankara
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: austin_aus
+  icao: KAUS
+  iem_network: TX_ASOS
+  iem_station: AUS
+  timezone: America/Chicago
+  temperature_unit: fahrenheit
+  polymarket_slug_city: austin
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: beijing_zbaa
+  icao: ZBAA
+  iem_network: CN__ASOS
+  iem_station: ZBAA
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: beijing
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: buenos_aires_saez
+  icao: SAEZ
+  iem_network: AR__ASOS
+  iem_station: SAEZ
+  timezone: America/Argentina/Buenos_Aires
+  temperature_unit: celsius
+  polymarket_slug_city: buenos-aires
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: busan_rkpk
+  icao: RKPK
+  iem_network: KR__ASOS
+  iem_station: RKPK
+  timezone: Asia/Seoul
+  temperature_unit: celsius
+  polymarket_slug_city: busan
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: cape_town_fact
+  icao: FACT
+  iem_network: ZA__ASOS
+  iem_station: FACT
+  timezone: Africa/Johannesburg
+  temperature_unit: celsius
+  polymarket_slug_city: cape-town
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: chengdu_zuuu
+  icao: ZUUU
+  iem_network: CN__ASOS
+  iem_station: ZUUU
+  timezone: Asia/Chongqing
+  temperature_unit: celsius
+  polymarket_slug_city: chengdu
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: chongqing_zuck
+  icao: ZUCK
+  iem_network: CN__ASOS
+  iem_station: ZUCK
+  timezone: Asia/Chongqing
+  temperature_unit: celsius
+  polymarket_slug_city: chongqing
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: denver_bkf
+  icao: KBKF
+  iem_network: CO_ASOS
+  iem_station: BKF
+  timezone: America/Denver
+  temperature_unit: fahrenheit
+  polymarket_slug_city: denver
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: guangzhou_zggg
+  icao: ZGGG
+  iem_network: CN__ASOS
+  iem_station: ZGGG
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: guangzhou
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: helsinki_efhk
+  icao: EFHK
+  iem_network: FI__ASOS
+  iem_station: EFHK
+  timezone: Europe/Helsinki
+  temperature_unit: celsius
+  polymarket_slug_city: helsinki
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: hong_kong_vhhh
+  icao: VHHH
+  iem_network: HK__ASOS
+  iem_station: VHHH
+  timezone: Asia/Hong_Kong
+  temperature_unit: celsius
+  polymarket_slug_city: hong-kong
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: houston_hou
+  icao: KHOU
+  iem_network: TX_ASOS
+  iem_station: HOU
+  timezone: America/Chicago
+  temperature_unit: fahrenheit
+  polymarket_slug_city: houston
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: istanbul_ltfm
+  icao: LTFM
+  iem_network: TR__ASOS
+  iem_station: LTFM
+  timezone: Europe/Istanbul
+  temperature_unit: celsius
+  polymarket_slug_city: istanbul
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: jeddah_oejn
+  icao: OEJN
+  iem_network: SA__ASOS
+  iem_station: OEJN
+  timezone: Asia/Riyadh
+  temperature_unit: celsius
+  polymarket_slug_city: jeddah
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: karachi_opkc
+  icao: OPKC
+  iem_network: PK__ASOS
+  iem_station: OPKC
+  timezone: Asia/Karachi
+  temperature_unit: celsius
+  polymarket_slug_city: karachi
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: kuala_lumpur_wmkk
+  icao: WMKK
+  iem_network: MY__ASOS
+  iem_station: WMKK
+  timezone: Asia/Kuala_Lumpur
+  temperature_unit: celsius
+  polymarket_slug_city: kuala-lumpur
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: london_eglc
+  icao: EGLC
+  iem_network: GB__ASOS
+  iem_station: EGLC
+  timezone: Europe/London
+  temperature_unit: celsius
+  polymarket_slug_city: london
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: los_angeles_lax
+  icao: KLAX
+  iem_network: CA_ASOS
+  iem_station: LAX
+  timezone: America/Los_Angeles
+  temperature_unit: fahrenheit
+  polymarket_slug_city: los-angeles
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: lucknow_vilk
+  icao: VILK
+  iem_network: IN__ASOS
+  iem_station: VILK
+  timezone: Asia/Kolkata
+  temperature_unit: celsius
+  polymarket_slug_city: lucknow
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: madrid_lemd
+  icao: LEMD
+  iem_network: ES__ASOS
+  iem_station: LEMD
+  timezone: Europe/Madrid
+  temperature_unit: celsius
+  polymarket_slug_city: madrid
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: manila_rpll
+  icao: RPLL
+  iem_network: PH__ASOS
+  iem_station: RPLL
+  timezone: Asia/Manila
+  temperature_unit: celsius
+  polymarket_slug_city: manila
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: mexico_city_mmmx
+  icao: MMMX
+  iem_network: MX__ASOS
+  iem_station: MMMX
+  timezone: America/Mexico_City
+  temperature_unit: celsius
+  polymarket_slug_city: mexico-city
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: moscow_uuww
+  icao: UUWW
+  iem_network: RU__ASOS
+  iem_station: UUWW
+  timezone: Europe/Moscow
+  temperature_unit: celsius
+  polymarket_slug_city: moscow
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: panama_city_mpmg
+  icao: MPMG
+  iem_network: PA__ASOS
+  iem_station: MPMG
+  timezone: America/Panama
+  temperature_unit: celsius
+  polymarket_slug_city: panama-city
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: paris_lfpb
+  icao: LFPB
+  iem_network: FR__ASOS
+  iem_station: LFPB
+  timezone: Europe/Paris
+  temperature_unit: celsius
+  polymarket_slug_city: paris
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: qingdao_zsqd
+  icao: ZSQD
+  iem_network: CN__ASOS
+  iem_station: ZSQD
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: qingdao
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: san_francisco_sfo
+  icao: KSFO
+  iem_network: CA_ASOS
+  iem_station: SFO
+  timezone: America/Los_Angeles
+  temperature_unit: fahrenheit
+  polymarket_slug_city: san-francisco
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: seattle_sea
+  icao: KSEA
+  iem_network: WA_ASOS
+  iem_station: SEA
+  timezone: America/Los_Angeles
+  temperature_unit: fahrenheit
+  polymarket_slug_city: seattle
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: seoul_rksi
+  icao: RKSI
+  iem_network: KR__ASOS
+  iem_station: RKSI
+  timezone: Asia/Seoul
+  temperature_unit: celsius
+  polymarket_slug_city: seoul
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: shanghai_zspd
+  icao: ZSPD
+  iem_network: CN__ASOS
+  iem_station: ZSPD
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: shanghai
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: shenzhen_zgsz
+  icao: ZGSZ
+  iem_network: CN__ASOS
+  iem_station: ZGSZ
+  timezone: Asia/Shanghai
+  temperature_unit: celsius
+  polymarket_slug_city: shenzhen
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: singapore_wsss
+  icao: WSSS
+  iem_network: SG__ASOS
+  iem_station: WSSS
+  timezone: Asia/Singapore
+  temperature_unit: celsius
+  polymarket_slug_city: singapore
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: sao_paulo_sbgr
+  icao: SBGR
+  iem_network: BR__ASOS
+  iem_station: SBGR
+  timezone: America/Sao_Paulo
+  temperature_unit: celsius
+  polymarket_slug_city: sao-paulo
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: taipei_rcss
+  icao: RCSS
+  iem_network: TW__ASOS
+  iem_station: RCSS
+  timezone: Asia/Taipei
+  temperature_unit: celsius
+  polymarket_slug_city: taipei
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: tel_aviv_llbg
+  icao: LLBG
+  iem_network: IL__ASOS
+  iem_station: LLBG
+  timezone: Asia/Jerusalem
+  temperature_unit: celsius
+  polymarket_slug_city: tel-aviv
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: tokyo_rjtt
+  icao: RJTT
+  iem_network: JP__ASOS
+  iem_station: RJTT
+  timezone: Asia/Tokyo
+  temperature_unit: celsius
+  polymarket_slug_city: tokyo
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: toronto_cyyz
+  icao: CYYZ
+  iem_network: CA_ON_ASOS
+  iem_station: CYYZ
+  timezone: America/Toronto
+  temperature_unit: celsius
+  polymarket_slug_city: toronto
+  role: paper
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: warsaw_epwa
+  icao: EPWA
+  iem_network: PL__ASOS
+  iem_station: EPWA
+  timezone: Europe/Warsaw
+  temperature_unit: celsius
+  polymarket_slug_city: warsaw
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+- location_id: wellington_nzwn
+  icao: NZWN
+  iem_network: NF__ASOS
+  iem_station: NZWN
+  timezone: Pacific/Auckland
+  temperature_unit: celsius
+  polymarket_slug_city: wellington
+  role: metar
+  rationale: Polymarket daily-Tmax city; METAR/ASOS resolution station.
+window:
+  max_hours_to_noon: 6
+  prefer_post_noon: true
+  min_hours_before_noon_to_skip: 12

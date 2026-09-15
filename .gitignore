@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dashboard/.next/
+dashboard/out/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.cursor/
+
+# Runtime ledgers / logs (regenerable)
+data/ledger/
+logs/
+*.jsonl
+
+# Docker
+.venv/
