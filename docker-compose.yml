@@ -1,0 +1,71 @@
+# WeatherBuyEnd Phase-1 — Coolify-ready stack
+# Local: docker compose up --build
+# Dashboard: http://localhost:3851  API: http://localhost:3847/health
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - weatherbuy_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3847:3847"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      API_HOST: 0.0.0.0
+      API_PORT: "3847"
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      LIVE_TRADING: ${LIVE_TRADING:-false}
+      MOCK_MARKETS: ${MOCK_MARKETS:-true}
+      PMXT_API_KEY: ${PMXT_API_KEY:-}
+      PMXT_WALLET_ADDRESS: ${PMXT_WALLET_ADDRESS:-}
+      CITY_ROLES: ${CITY_ROLES:-paper,strict,metar}
+      KILL_SWITCH: ${KILL_SWITCH:-false}
+    volumes:
+      - weatherbuy_ledger:/app/data/ledger
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3847/health', timeout=4)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3847}
+    restart: unless-stopped
+    ports:
+      - "3851:3851"
+    environment:
+      PORT: "3851"
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3847}
+    depends_on:
+      engine:
+        condition: service_healthy
+
+volumes:
+  weatherbuy_redis:
+  weatherbuy_ledger:

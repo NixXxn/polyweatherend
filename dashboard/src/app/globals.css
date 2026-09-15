@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #eef2f1;
+  --bg-elev: #f7faf8;
+  --ink: #14201c;
+  --muted: #5a6b64;
+  --line: #c9d5cf;
+  --accent: #0f6e56;
+  --accent-soft: #d7efe6;
+  --warn: #9a5b00;
+  --warn-soft: #f3e2c4;
+  --danger: #a11d2e;
+  --danger-soft: #f6d6db;
+  --ok: #0f6e56;
+  --ok-soft: #d7efe6;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elev: var(--bg-elev);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #d9ebe4 0%, transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, #e4ebe8 0%, transparent 50%),
+    var(--bg);
+  color: var(--ink);
+  font-family: var(--font-display), ui-sans-serif, sans-serif;
+  min-height: 100dvh;
+}
+
+.mono {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}

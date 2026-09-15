@@ -1,0 +1,13 @@
+# WeatherBuyEnd root image context ignores
+.git
+.env
+.env.*
+!.env.example
+dashboard/node_modules
+dashboard/.next
+**/__pycache__
+**/.venv
+data/ledger
+logs
+*.md
+!README.md
