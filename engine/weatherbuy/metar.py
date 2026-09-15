@@ -194,3 +194,26 @@ def is_eliminated_lowest(*, tmin_so_far: float | None, lo: float | None, hi: flo
     if tmin_so_far is None or lo is None:
         return False
     return float(tmin_so_far) < float(lo)
+
+
+def mock_day_state(city: dict[str, Any], *, tmax: float | None = None) -> DayState:
+    """Synthetic METAR day-state for paper/demo when IEM is rate-limited."""
+    from zoneinfo import ZoneInfo
+    now = datetime.now(timezone.utc)
+    tz = ZoneInfo(city.get("timezone") or "UTC")
+    local_day = now.astimezone(tz).date().isoformat()
+    unit = (city.get("temperature_unit") or "fahrenheit").lower()
+    # Default tmax high enough to eliminate low mock buckets (50-51 / 60-61)
+    if tmax is None:
+        tmax = 88.0 if unit.startswith("f") else 32.0
+    station = city.get("iem_station") or city.get("icao", "")[-3:]
+    return DayState(
+        local_day=local_day,
+        last_temp=float(tmax) - 1.0,
+        tmax_so_far=float(tmax),
+        tmin_so_far=float(tmax) - 10.0,
+        obs_utc=now,
+        obs_age_minutes=2.0,
+        n_obs=12,
+        station=station,
+    )

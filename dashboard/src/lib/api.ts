@@ -9,6 +9,8 @@ export type Snapshot = {
     pnl_today?: number;
     realized_pnl?: number;
     unrealized_pnl?: number;
+    wins?: number;
+    losses?: number;
     metar_age_worst_min?: number | null;
     last_metar_ts?: string | null;
     last_book_ts?: string | null;
@@ -16,10 +18,15 @@ export type Snapshot = {
     tick?: number;
     markets_tracked?: number;
     cities_tracked?: number;
+    fills_count?: number;
+    skips_count?: number;
+    settlements_count?: number;
   };
   cities: CityRow[];
   positions: Position[];
   fills: Fill[];
+  skips?: Skip[];
+  settlements?: Settlement[];
   controls: {
     killed?: boolean;
     sleeve_no_eliminated?: boolean;
@@ -31,6 +38,8 @@ export type Snapshot = {
     realized?: number;
     unrealized?: number;
     today?: number;
+    wins?: number;
+    losses?: number;
   };
 };
 
@@ -74,16 +83,33 @@ export type Fill = {
   question?: string;
 };
 
+export type Skip = {
+  skip_id?: string;
+  location_id: string;
+  city?: string;
+  reason: string;
+  no_price?: number | null;
+  ts: string;
+  question?: string;
+};
+
+export type Settlement = {
+  settlement_id?: string;
+  location_id: string;
+  city?: string;
+  result: string;
+  pnl_usd: number;
+  entry_price: number;
+  exit_price: number;
+  ts: string;
+};
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:3847";
 
 export async function fetchSnapshot(): Promise<Snapshot> {
-  const res = await fetch(`${API_URL}/api/snapshot`, {
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`API ${res.status}`);
-  }
+  const res = await fetch(`${API_URL}/api/snapshot`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`API ${res.status}`);
   return res.json();
 }
 
@@ -96,9 +122,11 @@ export async function postControl(
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    throw new Error(`Control ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Control ${res.status}`);
+}
+
+export function csvExportUrl(kind: string = "all"): string {
+  return `${API_URL}/api/export?kind=${encodeURIComponent(kind)}`;
 }
 
 export { API_URL };

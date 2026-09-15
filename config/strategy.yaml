@@ -20,18 +20,23 @@ execution:
   size_to_book_depth: true
 
 risk:
-  max_markets_per_day: 40
+  max_markets_per_day: 80
   max_markets_concurrent: 25
-  max_daily_notional_usd: 500
+  max_daily_notional_usd: 800
   max_per_fill_usd: 50
-  max_daily_loss_usd: 100
-  max_metar_age_minutes: 45
+  max_daily_loss_usd: 150
+  max_metar_age_minutes: 90
   max_venue_error_rate: 0.25
 
 loop:
-  metar_poll_sec: 30
+  metar_poll_sec: 45
   book_poll_sec: 5
-  market_refresh_sec: 120
+  market_refresh_sec: 90
+
+paper:
+  settle_after_sec: 35
+  rotate_markets_sec: 70
+  mock_metar_on_failure: true
 
 paths:
   cities: config/cities.yaml
