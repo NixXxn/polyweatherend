@@ -34,18 +34,32 @@ Optional Redis: `redis-server` or `docker run -p 6379:6379 redis:7-alpine`. Engi
 
 ## Docker / Coolify
 
+### Option A — Dockerfile mode (default Coolify “Dockerfile” build)
+
+Root `Dockerfile` builds the **engine + API** (paper by default). Coolify sets `PORT`; health check path: `/health`.
+
+```bash
+docker build -t weatherbuyend .
+docker run --rm -p 3847:3847 -e PORT=3847 weatherbuyend
+# → http://127.0.0.1:3847/health
+```
+
+In Coolify: Build Pack = **Dockerfile**, Dockerfile location = `/Dockerfile` (repo root), Port = `3847` (or whatever Coolify assigns via `PORT`).
+
+### Option B — Compose mode (engine + dashboard + redis)
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-| Service    | Port | Role                          |
-|------------|------|-------------------------------|
-| `engine`   | 3847 | METAR + exec loop + FastAPI   |
-| `dashboard`| 3851 | Next.js mobile ops UI         |
-| `redis`    | 6379 | Shared status / heartbeats    |
+| Service     | Port | Role                        |
+|-------------|------|-----------------------------|
+| `engine`    | 3847 | METAR + exec loop + FastAPI |
+| `dashboard` | 3851 | Next.js mobile ops UI       |
+| `redis`     | 6379 | Shared status / heartbeats  |
 
-**Coolify:** create a project from this compose file (or three services sharing the same repo). Inject secrets via Coolify env — never bake `PMXT_API_KEY` into the image. Point the dashboard `NEXT_PUBLIC_API_URL` at the public engine URL. Health check: `GET /health` on the engine.
+In Coolify: use **Docker Compose**, compose file `docker-compose.yml`. Inject secrets as env (`PMXT_API_KEY`, etc.) — never bake into the image. Set dashboard `NEXT_PUBLIC_API_URL` to the public engine URL.
 
 ## Live trading (opt-in)
 

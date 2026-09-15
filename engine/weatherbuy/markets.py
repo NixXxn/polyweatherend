@@ -93,13 +93,16 @@ class MarketService:
         self.by_lid = {c["location_id"]: c for c in cities}
         self.markets: list[WeatherMarket] = []
         self.quotes: dict[str, BookQuote] = {}
+        self._epoch = 0
         self._client = httpx.Client(timeout=30.0, follow_redirects=True)
 
     def close(self) -> None:
         self._client.close()
 
-    def refresh_markets(self) -> list[WeatherMarket]:
+    def refresh_markets(self, force_new: bool = False) -> list[WeatherMarket]:
         if self.settings.mock_markets or not self.settings.pmxt_api_key:
+            if force_new:
+                self._epoch += 1
             self.markets = self._mock_markets()
             return self.markets
         try:
@@ -193,7 +196,7 @@ class MarketService:
             day = local.date().isoformat()
             # Three buckets: below / at / above a placeholder — elim can hit the low ones
             for i, (lo, hi) in enumerate([(50, 51), (60, 61), (70, 71)] if city.get("temperature_unit", "").startswith("f") else [(10, 11), (20, 21), (30, 31)]):
-                mid = f"mock-{lid}-{day}-{i}"
+                mid = f"mock-{lid}-{day}-{self._epoch}-{i}"
                 h = hashlib.sha1(mid.encode()).hexdigest()[:12]
                 out.append(
                     WeatherMarket(

@@ -29,6 +29,8 @@ class Store:
             self.ledger_dir = repo_root() / self.ledger_dir
         self.ledger_dir.mkdir(parents=True, exist_ok=True)
         self.fills_path = self.ledger_dir / "fills.jsonl"
+        self.skips_path = self.ledger_dir / "skips.jsonl"
+        self.settlements_path = self.ledger_dir / "settlements.jsonl"
         self.state_path = self.ledger_dir / "state.json"
 
         self._memory: dict[str, Any] = {
@@ -36,6 +38,8 @@ class Store:
             "cities": [],
             "positions": [],
             "fills": [],
+            "skips": [],
+            "settlements": [],
             "controls": {},
             "pnl": {"realized": 0.0, "unrealized": 0.0, "today": 0.0},
         }
@@ -64,6 +68,20 @@ class Store:
                 except json.JSONDecodeError:
                     continue
             self._memory["fills"] = fills
+        self._memory["skips"] = self._read_jsonl(self.skips_path, 400)
+        self._memory["settlements"] = self._read_jsonl(self.settlements_path, 300)
+
+
+    def _read_jsonl(self, path: Path, n: int) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        for line in path.read_text().splitlines()[-n:]:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
 
     def _persist(self) -> None:
         payload = {
@@ -118,13 +136,33 @@ class Store:
                 f.write(json.dumps(row) + "\n")
             self._persist()
 
+
+    def append_skip(self, skip: dict[str, Any]) -> None:
+        with self._lock:
+            skips = list(self._memory.get("skips") or [])
+            skips.append(skip)
+            self._memory["skips"] = skips[-400:]
+            with self.skips_path.open("a") as f:
+                f.write(json.dumps(skip) + "\n")
+
+    def append_settlement(self, settlement: dict[str, Any]) -> None:
+        with self._lock:
+            rows = list(self._memory.get("settlements") or [])
+            rows.append(settlement)
+            self._memory["settlements"] = rows[-300:]
+            with self.settlements_path.open("a") as f:
+                f.write(json.dumps(settlement) + "\n")
+            self._persist()
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "status": self._memory.get("status", {}),
                 "cities": self._memory.get("cities", []),
                 "positions": self._memory.get("positions", []),
-                "fills": list(self._memory.get("fills") or [])[-50:][::-1],
+                "fills": list(self._memory.get("fills") or [])[-80:][::-1],
+                "skips": list(self._memory.get("skips") or [])[-80:][::-1],
+                "settlements": list(self._memory.get("settlements") or [])[-80:][::-1],
                 "controls": self._memory.get("controls", {}),
                 "pnl": self._memory.get("pnl", {}),
             }

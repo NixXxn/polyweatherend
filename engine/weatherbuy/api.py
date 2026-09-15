@@ -8,9 +8,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .export_csv import TRADE_COLUMNS, build_analysis_rows, filter_rows, rows_to_csv
 from .loop import ExecEngine
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,27 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
     @app.get("/api/controls")
     def api_controls() -> dict[str, Any]:
         return require_engine().store.snapshot()["controls"]
+
+    @app.get("/api/skips")
+    def api_skips() -> list[dict[str, Any]]:
+        return require_engine().store.snapshot().get("skips") or []
+
+    @app.get("/api/settlements")
+    def api_settlements() -> list[dict[str, Any]]:
+        return require_engine().store.snapshot().get("settlements") or []
+
+    @app.get("/api/export")
+    def api_export(kind: str = "all") -> Response:
+        """Spreadsheet export: kind=all|trades|skips|wins|losses|settlements."""
+        snap = require_engine().store.snapshot()
+        rows = filter_rows(build_analysis_rows(snap), kind)
+        body = rows_to_csv(rows, TRADE_COLUMNS)
+        filename = f"weatherbuyend-{kind}.csv"
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.post("/api/controls/kill")
     def api_kill(body: KillBody) -> dict[str, Any]:
