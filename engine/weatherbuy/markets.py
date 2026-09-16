@@ -14,6 +14,7 @@ import httpx
 
 from .config import Settings
 from .metar import DayState, hours_to_local_noon
+from .strategy import polymarket_event_url
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class WeatherMarket:
     end_date: str | None = None
     timezone: str = "UTC"
     temperature_unit: str = "fahrenheit"
+    event_slug: str | None = None
+    polymarket_url: str | None = None
 
 
 @dataclass
@@ -141,6 +144,15 @@ class MarketService:
             tokens = item.get("tokens") or item.get("outcomes") or []
             yes_id, no_id = self._token_ids(item, tokens)
             mid = str(item.get("id") or item.get("condition_id") or item.get("market_id"))
+            end_date = item.get("end_date") or item.get("endDate")
+            event_slug = item.get("event_slug") or item.get("slug")
+            pm_url = polymarket_event_url(
+                city_slug=slug,
+                kind=kind,
+                end_date=str(end_date) if end_date else None,
+                event_slug=str(event_slug) if event_slug else None,
+                market_id=mid,
+            )
             out.append(
                 WeatherMarket(
                     market_id=mid,
@@ -152,9 +164,11 @@ class MarketService:
                     hi=hi,
                     yes_token_id=yes_id,
                     no_token_id=no_id,
-                    end_date=item.get("end_date") or item.get("endDate"),
+                    end_date=end_date,
                     timezone=city["timezone"],
                     temperature_unit=city.get("temperature_unit", "fahrenheit"),
+                    event_slug=str(event_slug) if event_slug else None,
+                    polymarket_url=pm_url,
                 )
             )
         return out
@@ -198,6 +212,9 @@ class MarketService:
             for i, (lo, hi) in enumerate([(50, 51), (60, 61), (70, 71)] if city.get("temperature_unit", "").startswith("f") else [(10, 11), (20, 21), (30, 31)]):
                 mid = f"mock-{lid}-{day}-{self._epoch}-{i}"
                 h = hashlib.sha1(mid.encode()).hexdigest()[:12]
+                pm_url = polymarket_event_url(
+                    city_slug=slug, kind="highest", end_date=day, market_id=mid
+                )
                 out.append(
                     WeatherMarket(
                         market_id=mid,
@@ -212,6 +229,7 @@ class MarketService:
                         end_date=day,
                         timezone=city["timezone"],
                         temperature_unit=city.get("temperature_unit", "fahrenheit"),
+                        polymarket_url=pm_url,
                     )
                 )
         return out
@@ -261,23 +279,28 @@ class MarketService:
         )
 
     def _mock_quote(self, m: WeatherMarket, st: DayState | None) -> BookQuote:
-        # If eliminated, quote stale residual YES (~3–12¢) so NO sits in 0.88–0.97 band
+        # Elim residual YES ~2–10¢ ⇒ NO in densest wallet band ~0.90–0.97
         eliminated = False
         if st and st.tmax_so_far is not None and m.hi is not None and m.kind == "highest":
             eliminated = st.tmax_so_far > m.hi
+        if st and st.tmin_so_far is not None and m.lo is not None and m.kind == "lowest":
+            eliminated = st.tmin_so_far < m.lo
         if eliminated:
-            yes_ask = 0.05
-            no_ask = 0.95
+            digest = int(hashlib.sha1(m.market_id.encode()).hexdigest()[:8], 16)
+            # Spread across 0.90–0.969 (avoid defaulting to 1–2¢ residual wins)
+            no_ask = 0.90 + (digest % 70) / 1000.0
+            yes_ask = max(0.01, min(0.12, 1.0 - no_ask))
         else:
             yes_ask = 0.45
             no_ask = 0.55
+        no_bid = max(0.01, no_ask - 0.008)
         return BookQuote(
             market_id=m.market_id,
             yes_bid=max(0.01, yes_ask - 0.02),
             yes_ask=yes_ask,
-            no_bid=max(0.01, no_ask - 0.02),
+            no_bid=no_bid,
             no_ask=no_ask,
-            no_mid=no_ask - 0.01,
+            no_mid=(no_ask + no_bid) / 2,
             depth_no_usd=150.0,
             ts=datetime.now(timezone.utc).isoformat(),
         )

@@ -23,7 +23,7 @@ from .metar import (
 )
 from .risk import RiskGate
 from .store import Store
-from .strategy import evaluate_no_eliminated, no_eliminated_cfg, stake_usd
+from .strategy import evaluate_no_eliminated, no_eliminated_cfg, polymarket_event_url, stake_usd
 from .venue import Venue
 
 logger = logging.getLogger(__name__)
@@ -305,7 +305,21 @@ class ExecEngine:
             edge=decision.net_edge,
             depth_usd=float(quote.depth_no_usd or 0),
         )
-        self.store.append_fill(fill)
+        pm_url = getattr(market, "polymarket_url", None) or polymarket_event_url(
+            city_slug=city["polymarket_slug_city"],
+            kind=market.kind,
+            end_date=getattr(market, "end_date", None),
+            event_slug=getattr(market, "event_slug", None),
+            market_id=market.market_id,
+        )
+        fill_row = {
+            **asdict(fill),
+            "city": city["polymarket_slug_city"],
+            "polymarket_url": pm_url,
+            "kind": market.kind,
+            "end_date": getattr(market, "end_date", None),
+        }
+        self.store.append_fill(fill_row)
         if fill.status in {"filled", "submitted"}:
             self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
             pos = {
@@ -327,6 +341,9 @@ class ExecEngine:
                 "kind": market.kind,
                 "lo": market.lo,
                 "hi": market.hi,
+                "entry_elim": True,  # hard elim only — honor on settle if METAR drops
+                "polymarket_url": pm_url,
+                "end_date": getattr(market, "end_date", None),
             }
             self._open[market.market_id] = pos
 
@@ -334,6 +351,9 @@ class ExecEngine:
         if self.settings.is_live:
             return
         now = datetime.now(timezone.utc)
+        scalp_on = bool(self.no_cfg.get("scalp_enabled", True))
+        scalp_bid = float(self.no_cfg.get("scalp_no_bid", 0.99))
+        scalp_min_hold = float(self.no_cfg.get("scalp_min_hold_sec", 3.0))
         done: list[str] = []
         for mid, pos in list(self._open.items()):
             try:
@@ -341,10 +361,11 @@ class ExecEngine:
             except Exception:
                 opened = now
             hold = (now - opened).total_seconds()
-            if hold < self._paper_settle_sec:
+            if hold < min(self._paper_settle_sec, scalp_min_hold if scalp_on else self._paper_settle_sec):
                 continue
+
             st = self._day_states.get(pos["location_id"])
-            still_elim = False
+            still_elim: bool | None = None
             if st is not None:
                 if pos.get("kind") == "lowest":
                     still_elim = is_eliminated_lowest(
@@ -354,7 +375,48 @@ class ExecEngine:
                     still_elim = is_eliminated_highest(
                         tmax_so_far=st.tmax_so_far, lo=pos.get("lo"), hi=pos.get("hi")
                     )
-            exit_price = 1.0 if still_elim else 0.0
+
+            # Scalp-or-hold: optional fast SELL NO near ~0.99 when book marks up
+            exit_price: float | None = None
+            reason = ""
+            if scalp_on and hold >= scalp_min_hold:
+                q = self.markets.quotes.get(mid)
+                bid = float(q.no_bid) if q and q.no_bid is not None else None
+                # Paper mock: ~1/5 of hard-elim tickets get an immediate mark-up scalp
+                if (
+                    bid is not None
+                    and bid < scalp_bid
+                    and (self.settings.mock_markets or not self.settings.pmxt_api_key)
+                    and pos.get("entry_elim")
+                    and still_elim is not False
+                ):
+                    digest = abs(hash(mid)) % 5
+                    if digest == 0:
+                        bid = scalp_bid
+                if bid is not None and bid >= scalp_bid:
+                    exit_price = bid
+                    reason = "scalp_sell"
+
+            if exit_price is None:
+                if hold < self._paper_settle_sec:
+                    continue
+                # Hold-to-resolve on solid elim. Honor entry elim if METAR missing —
+                # never invent big losses from soft/missing signals.
+                if still_elim is True:
+                    exit_price = 1.0
+                    reason = "still_eliminated"
+                elif still_elim is None and pos.get("entry_elim"):
+                    exit_price = 1.0
+                    reason = "entry_elim_honored"
+                elif still_elim is False:
+                    # Rare reverse: bucket survived — lose full entry (NO asymmetry)
+                    exit_price = 0.0
+                    reason = "bucket_survived"
+                else:
+                    exit_price = 1.0
+                    reason = "entry_elim_honored"
+
+            # PnL: win ≈ (1−p)×shares ; loss ≈ −p×shares (real NO asymmetry)
             pnl = (exit_price - float(pos["entry_price"])) * float(pos["shares"])
             result = "win" if pnl >= 0 else "loss"
             if result == "win":
@@ -383,7 +445,8 @@ class ExecEngine:
                     "status": "settled",
                     "result": result,
                     "question": pos.get("question"),
-                    "reason": "still_eliminated" if still_elim else "bucket_survived",
+                    "reason": reason,
+                    "polymarket_url": pos.get("polymarket_url"),
                 }
             )
             done.append(mid)

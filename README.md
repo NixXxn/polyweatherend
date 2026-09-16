@@ -6,9 +6,10 @@ Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature
 
 1. Polls IEM ASOS/METAR per city station.
 2. Tracks weather bucket markets + NO book (mock books by default; PMXT catalog when configured).
-3. Gates entries with hard elim + ≤6h to local noon + NO price band `0.80–0.985`.
-4. Sends **FOK/IOC taker BUY NO** (paper fills unless `LIVE_TRADING=true`).
-5. Exposes kill / arm / sleeve / stake controls on a phone-first dashboard.
+3. Gates entries with **hard METAR elim only**, post-noon preference (≤6h to noon), NO band `0.90–0.98` with min edge, small tickets.
+4. Scalp-or-hold: optional SELL NO near `0.99` when the book marks up; else hold-to-resolve.
+5. Sends **FOK/IOC taker BUY NO** (paper fills unless `LIVE_TRADING=true`).
+6. Mobile ops dashboard: kill / arm / sleeve / stake, city status, PnL, Polymarket links, CSV export.
 
 ## Quick start (local)
 

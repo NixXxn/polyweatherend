@@ -5,6 +5,7 @@ import {
   API_URL,
   csvExportUrl,
   fetchSnapshot,
+  polymarketUrl,
   postControl,
   type Snapshot,
 } from "@/lib/api";
@@ -28,11 +29,33 @@ function badgeClass(badge: string) {
   }
 }
 
+function MarketLink({
+  href,
+  label = "Polymarket",
+}: {
+  href: string;
+  label?: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="pm-link text-[11px]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {label} ↗
+    </a>
+  );
+}
+
 export default function OpsDashboard() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [tab, setTab] = useState<"cities" | "positions" | "fills" | "skips">("cities");
+  const [tab, setTab] = useState<"cities" | "positions" | "fills" | "skips">(
+    "cities",
+  );
 
   const reload = useCallback(async () => {
     try {
@@ -68,102 +91,120 @@ export default function OpsDashboard() {
   const fills = snap?.fills ?? [];
   const skips = snap?.skips ?? [];
   const settlements = snap?.settlements ?? [];
+  const hitRate =
+    (status?.wins ?? 0) + (status?.losses ?? 0) > 0
+      ? (
+          ((status?.wins ?? 0) /
+            ((status?.wins ?? 0) + (status?.losses ?? 0))) *
+          100
+        ).toFixed(0)
+      : null;
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-lg flex-col gap-4 px-4 pb-12 pt-5">
-      <header className="flex items-end justify-between gap-3">
+    <main className="mx-auto flex min-h-dvh max-w-lg flex-col gap-5 px-4 pb-14 pt-6">
+      <header className="anim-rise flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold tracking-[0.18em] text-[var(--accent)] uppercase">
+          <h1 className="text-[1.65rem] font-semibold leading-none tracking-tight text-[var(--accent)]">
             WeatherBuyEnd
+          </h1>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Late-day METAR BUY NO · ops
           </p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ops</h1>
         </div>
-        <div className="text-right text-xs text-[var(--muted)]">
-          <div className="mono">{status?.mode ?? "…"}</div>
-          <div className="mono">
+        <div className="text-right text-[11px] text-[var(--muted)]">
+          <div className="mono font-medium uppercase tracking-wide text-[var(--ink)]">
+            {status?.mode ?? "…"}
+          </div>
+          <div className="mono mt-0.5">
             {status?.mock_markets ? "mock books" : "live books"}
           </div>
         </div>
       </header>
 
       {error && (
-        <div className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
+        <div className="anim-rise rounded-2xl border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-3.5 py-2.5 text-sm text-[var(--danger)]">
           {error}
-          <div className="mono mt-1 text-[11px] opacity-80">{API_URL}</div>
+          <div className="mono mt-1 text-[11px] opacity-75">{API_URL || "/"}</div>
         </div>
       )}
 
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4">
-        <div className="flex items-center justify-between gap-3">
+      <section
+        className={`anim-rise rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4 ${armed ? "armed-glow" : ""}`}
+      >
+        <div className="flex items-end justify-between gap-3">
           <div>
-            <div className="text-xs text-[var(--muted)]">Status</div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+              Sleeve
+            </div>
             <div
-              className={`mt-1 text-xl font-semibold ${armed ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+              className={`mt-1.5 text-2xl font-semibold tracking-tight ${armed ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
             >
-              {armed ? "ARMED" : "FLAT / KILLED"}
+              {armed ? "ARMED" : "FLAT"}
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-[var(--muted)]">PnL today</div>
-            <div className="mono mt-1 text-xl font-medium">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
+              PnL today
+            </div>
+            <div
+              className={`mono mt-1.5 text-2xl font-medium ${(status?.pnl_today ?? 0) >= 0 ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+            >
               {money(status?.pnl_today)}
             </div>
           </div>
         </div>
-        <div className="mt-4 grid grid-cols-4 gap-2 text-center text-[11px]">
-          <div className="rounded-xl bg-[var(--bg)] px-2 py-2">
-            <div className="text-[var(--muted)]">Open</div>
-            <div className="mono mt-1 text-base font-medium">
-              {status?.open_no_count ?? "—"}
-            </div>
-          </div>
-          <div className="rounded-xl bg-[var(--bg)] px-2 py-2">
-            <div className="text-[var(--muted)]">W / L</div>
-            <div className="mono mt-1 text-base font-medium">
-              {status?.wins ?? 0}/{status?.losses ?? 0}
-            </div>
-          </div>
-          <div className="rounded-xl bg-[var(--bg)] px-2 py-2">
-            <div className="text-[var(--muted)]">METAR</div>
-            <div className="mono mt-1 text-base font-medium">
-              {status?.metar_age_worst_min != null
+        <div className="mt-4 grid grid-cols-4 gap-2">
+          {[
+            ["Open", status?.open_no_count ?? "—"],
+            ["W/L", `${status?.wins ?? 0}/${status?.losses ?? 0}`],
+            [
+              "Hit",
+              hitRate != null ? `${hitRate}%` : "—",
+            ],
+            [
+              "METAR",
+              status?.metar_age_worst_min != null
                 ? `${Math.round(status.metar_age_worst_min)}m`
-                : "—"}
+                : "—",
+            ],
+          ].map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-xl bg-[var(--bg)]/80 px-2 py-2.5 text-center"
+            >
+              <div className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                {label}
+              </div>
+              <div className="mono mt-1 text-[15px] font-semibold">{value}</div>
             </div>
-          </div>
-          <div className="rounded-xl bg-[var(--bg)] px-2 py-2">
-            <div className="text-[var(--muted)]">Skips</div>
-            <div className="mono mt-1 text-base font-medium">
-              {status?.skips_count ?? skips.length}
-            </div>
-          </div>
+          ))}
         </div>
       </section>
 
-      <section className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4">
+      <section className="anim-rise rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4">
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold">Controls</div>
+          <h2 className="text-sm font-semibold">Controls</h2>
           <a
             href={csvExportUrl("all")}
-            className="rounded-lg bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)]"
+            className="tap rounded-lg bg-[var(--accent-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)]"
           >
             Export CSV
           </a>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2.5">
           <button
             disabled={pending}
             onClick={() =>
               run(() => postControl("/api/controls/kill", { reason: "manual" }))
             }
-            className="min-h-12 rounded-xl bg-[var(--danger)] px-3 text-sm font-semibold text-white active:scale-[0.98]"
+            className="tap min-h-12 rounded-xl bg-[var(--danger)] px-3 text-sm font-semibold text-white"
           >
             Kill all
           </button>
           <button
             disabled={pending}
             onClick={() => run(() => postControl("/api/controls/arm"))}
-            className="min-h-12 rounded-xl bg-[var(--accent)] px-3 text-sm font-semibold text-white active:scale-[0.98]"
+            className="tap min-h-12 rounded-xl bg-[var(--accent)] px-3 text-sm font-semibold text-white"
           >
             Arm
           </button>
@@ -176,7 +217,7 @@ export default function OpsDashboard() {
                 }),
               )
             }
-            className="min-h-12 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 text-sm font-medium"
+            className="tap min-h-12 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 text-sm font-medium"
           >
             Sleeve {snap?.controls?.sleeve_no_eliminated ? "ON" : "OFF"}
           </button>
@@ -188,17 +229,17 @@ export default function OpsDashboard() {
                 postControl("/api/controls/stake", { multiplier: next }),
               );
             }}
-            className="min-h-12 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 text-sm font-medium"
+            className="tap min-h-12 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 text-sm font-medium"
           >
             Stake ×{snap?.controls?.stake_multiplier ?? 1}
           </button>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+        <div className="mt-3 flex flex-wrap gap-2">
           {(["all", "trades", "skips", "wins", "losses"] as const).map((k) => (
             <a
               key={k}
               href={csvExportUrl(k)}
-              className="rounded-md border border-[var(--line)] px-2 py-1 text-[var(--muted)]"
+              className="tap rounded-md border border-[var(--line)] px-2.5 py-1 text-[11px] text-[var(--muted)]"
             >
               {k}.csv
             </a>
@@ -206,38 +247,39 @@ export default function OpsDashboard() {
         </div>
         {status?.kill_reason ? (
           <p className="mt-3 text-xs text-[var(--danger)]">
-            Kill reason: {status.kill_reason}
+            Kill: {status.kill_reason}
           </p>
         ) : null}
       </section>
 
-      <nav className="flex gap-1 rounded-xl bg-[var(--bg-elev)] p-1 border border-[var(--line)]">
+      <nav className="anim-rise flex gap-1 rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] p-1">
         {(
           [
-            ["cities", `Cities (${cities.length})`],
-            ["positions", `Pos (${positions.length})`],
-            ["fills", `Fills (${fills.length})`],
-            ["skips", `Skips (${skips.length})`],
+            ["cities", "Cities", cities.length],
+            ["positions", "Pos", positions.length],
+            ["fills", "Fills", fills.length],
+            ["skips", "Skips", skips.length],
           ] as const
-        ).map(([id, label]) => (
+        ).map(([id, label, count]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-semibold ${
+            className={`tap flex-1 rounded-lg px-1.5 py-2.5 text-[11px] font-semibold ${
               tab === id
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--muted)]"
             }`}
           >
             {label}
+            <span className="mono ml-1 opacity-80">{count}</span>
           </button>
         ))}
       </nav>
 
       {tab === "cities" && (
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2.5">
           {cities.length === 0 && (
-            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--muted)]">
+            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-8 text-center text-sm text-[var(--muted)]">
               Waiting for METAR / market loop…
             </div>
           )}
@@ -245,48 +287,49 @@ export default function OpsDashboard() {
             .slice()
             .sort((a, b) => {
               const rank = (x: string) =>
-                ({ ELIM: 0, WATCH: 1, BLOCKED: 2, IDLE: 3 }[x] ?? 9);
+                ({ ELIM: 0, WATCH: 1, BLOCKED: 2, IDLE: 3 })[x] ?? 9;
               return rank(a.badge) - rank(b.badge);
             })
-            .map((c) => (
+            .map((c, i) => (
               <article
                 key={c.location_id}
-                className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3 py-3"
+                className="anim-rise rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3"
+                style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="font-semibold capitalize">
+                    <div className="font-semibold capitalize tracking-tight">
                       {c.city_slug.replace(/-/g, " ")}
                     </div>
-                    <div className="mono text-[11px] text-[var(--muted)]">
-                      {c.icao} ·{" "}
+                    <div className="mono mt-0.5 text-[11px] text-[var(--muted)]">
+                      {c.icao}
                       {c.hours_to_noon != null
-                        ? `${c.hours_to_noon}h→noon`
-                        : "—"}
+                        ? ` · ${c.hours_to_noon > 0 ? `${c.hours_to_noon}h to noon` : `${Math.abs(c.hours_to_noon)}h past noon`}`
+                        : ""}
                     </div>
                   </div>
                   <span
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold tracking-wide ${badgeClass(c.badge)}`}
+                    className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-wider ${badgeClass(c.badge)}`}
                   >
                     {c.badge}
                   </span>
                 </div>
-                <div className="mono mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--muted)]">
+                <div className="mono mt-2.5 grid grid-cols-3 gap-2 text-[11px] text-[var(--muted)]">
                   <div>
                     tmax{" "}
-                    <span className="text-[var(--ink)]">
+                    <span className="font-medium text-[var(--ink)]">
                       {c.tmax_so_far != null ? c.tmax_so_far.toFixed(1) : "—"}
                     </span>
                   </div>
                   <div>
                     NO{" "}
-                    <span className="text-[var(--ink)]">
+                    <span className="font-medium text-[var(--ink)]">
                       {c.best_no != null ? c.best_no.toFixed(3) : "—"}
                     </span>
                   </div>
                   <div>
                     age{" "}
-                    <span className="text-[var(--ink)]">
+                    <span className="font-medium text-[var(--ink)]">
                       {c.metar_age_minutes != null
                         ? `${c.metar_age_minutes.toFixed(0)}m`
                         : "—"}
@@ -299,105 +342,155 @@ export default function OpsDashboard() {
       )}
 
       {tab === "positions" && (
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2.5">
           {positions.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-5 text-center text-sm text-[var(--muted)]">
+            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--muted)]">
               No open NO positions
             </div>
           ) : (
-            positions.map((p) => (
-              <div
-                key={p.market_id}
-                className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3 py-3"
-              >
-                <div className="flex justify-between gap-2">
-                  <div className="font-medium capitalize">
-                    {p.city.replace(/_/g, " ")}
+            positions.map((p) => {
+              const href = polymarketUrl({
+                city: p.city,
+                kind: p.kind,
+                end_date: p.end_date,
+                url: p.polymarket_url,
+              });
+              return (
+                <div
+                  key={p.market_id}
+                  className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold capitalize tracking-tight">
+                        {p.city.replace(/_/g, " ")}
+                      </div>
+                      <div className="mt-1">
+                        <MarketLink href={href} />
+                      </div>
+                    </div>
+                    <div
+                      className={`mono text-sm font-medium ${(p.unrealized_pnl ?? 0) >= 0 ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+                    >
+                      {money(p.unrealized_pnl)}
+                    </div>
                   </div>
-                  <div className="mono text-sm">{money(p.unrealized_pnl)}</div>
+                  <div className="mono mt-2 text-[11px] text-[var(--muted)]">
+                    entry {p.entry_price.toFixed(3)} · mark{" "}
+                    {p.mark_no.toFixed(3)} · ${p.size_usd.toFixed(2)}
+                  </div>
                 </div>
-                <div className="mono mt-1 text-[11px] text-[var(--muted)]">
-                  entry {p.entry_price.toFixed(3)} · mark {p.mark_no.toFixed(3)}{" "}
-                  · ${p.size_usd.toFixed(2)}
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
           {settlements.length > 0 && (
             <>
-              <h3 className="mt-2 text-xs font-semibold text-[var(--muted)]">
-                Recent settlements
+              <h3 className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+                Settlements
               </h3>
-              {settlements.slice(0, 20).map((s, i) => (
-                <div
-                  key={s.settlement_id || i}
-                  className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3 py-2"
-                >
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium capitalize">
-                      {(s.city || s.location_id || "").replace(/_/g, " ")}
-                    </span>
-                    <span
-                      className={`mono ${s.result === "win" ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
-                    >
-                      {s.result} {money(s.pnl_usd)}
-                    </span>
+              {settlements.slice(0, 20).map((s, i) => {
+                const href = polymarketUrl({
+                  city: s.city || s.location_id,
+                  url: s.polymarket_url,
+                });
+                return (
+                  <div
+                    key={s.settlement_id || i}
+                    className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-2 text-sm">
+                      <div>
+                        <span className="font-semibold capitalize">
+                          {(s.city || s.location_id || "").replace(/_/g, " ")}
+                        </span>
+                        <div className="mt-1">
+                          <MarketLink href={href} />
+                        </div>
+                      </div>
+                      <span
+                        className={`mono font-medium ${s.result === "win" ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+                      >
+                        {s.result} {money(s.pnl_usd)}
+                      </span>
+                    </div>
+                    {s.reason ? (
+                      <div className="mono mt-1 text-[10px] text-[var(--muted)]">
+                        {s.reason}
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
         </section>
       )}
 
       {tab === "fills" && (
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2.5">
           {fills.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-5 text-center text-sm text-[var(--muted)]">
+            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--muted)]">
               No fills yet
             </div>
           ) : (
-            fills.slice(0, 50).map((f) => (
-              <div
-                key={f.fill_id}
-                className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3 py-2"
-              >
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">{f.location_id}</span>
-                  <span className="mono">
-                    {f.price.toFixed(3)} · ${f.size_usd.toFixed(2)}
-                  </span>
+            fills.slice(0, 50).map((f) => {
+              const href = polymarketUrl({
+                city: f.city || f.location_id,
+                url: f.polymarket_url,
+              });
+              return (
+                <div
+                  key={f.fill_id}
+                  className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-2.5"
+                >
+                  <div className="flex items-start justify-between gap-2 text-sm">
+                    <div>
+                      <span className="font-semibold capitalize">
+                        {(f.city || f.location_id || "").replace(/_/g, " ")}
+                      </span>
+                      <div className="mt-1">
+                        <MarketLink href={href} />
+                      </div>
+                    </div>
+                    <span className="mono font-medium">
+                      {f.price.toFixed(3)} · ${f.size_usd.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="mono mt-1.5 text-[11px] text-[var(--muted)]">
+                    {f.status} · {f.mode} · {f.latency_ms?.toFixed?.(0) ?? "—"}
+                    ms · {new Date(f.ts).toLocaleTimeString()}
+                  </div>
                 </div>
-                <div className="mono text-[11px] text-[var(--muted)]">
-                  {f.status} · {f.mode} · {f.latency_ms?.toFixed?.(0) ?? "—"}ms ·{" "}
-                  {new Date(f.ts).toLocaleTimeString()}
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </section>
       )}
 
       {tab === "skips" && (
-        <section className="flex flex-col gap-2">
+        <section className="flex flex-col gap-2.5">
           {skips.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-5 text-center text-sm text-[var(--muted)]">
+            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--muted)]">
               No skips logged
             </div>
           ) : (
             skips.slice(0, 50).map((s, i) => (
               <div
                 key={s.skip_id || i}
-                className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3 py-2"
+                className="rounded-xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-2.5"
               >
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">
-                    {s.city || s.location_id}
+                <div className="flex justify-between gap-2 text-sm">
+                  <span className="font-semibold capitalize">
+                    {(s.city || s.location_id || "").replace(/-/g, " ")}
                   </span>
-                  <span className="mono text-[var(--muted)]">{s.reason}</span>
+                  <span className="mono text-[11px] text-[var(--muted)]">
+                    {s.reason}
+                  </span>
                 </div>
-                <div className="mono text-[11px] text-[var(--muted)]">
-                  {s.no_price != null ? `NO ${Number(s.no_price).toFixed(3)} · ` : ""}
+                <div className="mono mt-1 text-[11px] text-[var(--muted)]">
+                  {s.no_price != null
+                    ? `NO ${Number(s.no_price).toFixed(3)} · `
+                    : ""}
                   {new Date(s.ts).toLocaleTimeString()}
                 </div>
               </div>

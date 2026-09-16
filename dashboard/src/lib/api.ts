@@ -69,6 +69,9 @@ export type Position = {
   mark_no: number;
   unrealized_pnl: number;
   question: string;
+  polymarket_url?: string;
+  kind?: string;
+  end_date?: string;
 };
 
 export type Fill = {
@@ -81,6 +84,9 @@ export type Fill = {
   status: string;
   ts: string;
   question?: string;
+  city?: string;
+  polymarket_url?: string;
+  market_id?: string;
 };
 
 export type Skip = {
@@ -102,9 +108,45 @@ export type Settlement = {
   entry_price: number;
   exit_price: number;
   ts: string;
+  polymarket_url?: string;
+  reason?: string;
+  question?: string;
 };
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+
+/** Polymarket event URL for a weather city/day (fallback when API omits link). */
+export function polymarketUrl(opts: {
+  city?: string;
+  kind?: string;
+  end_date?: string;
+  url?: string | null;
+}): string {
+  if (opts.url) return opts.url;
+  const city = (opts.city || "nyc").replace(/_/g, "-");
+  const kind = (opts.kind || "highest").toLowerCase().startsWith("high")
+    ? "highest"
+    : "lowest";
+  let datePart = "";
+  if (opts.end_date) {
+    const d = new Date(`${opts.end_date.slice(0, 10)}T12:00:00Z`);
+    if (!Number.isNaN(d.getTime())) {
+      const month = d.toLocaleString("en-US", {
+        month: "long",
+        timeZone: "UTC",
+      }).toLowerCase();
+      datePart = `${month}-${d.getUTCDate()}-${d.getUTCFullYear()}`;
+    }
+  }
+  if (!datePart) {
+    const now = new Date();
+    const month = now
+      .toLocaleString("en-US", { month: "long" })
+      .toLowerCase();
+    datePart = `${month}-${now.getDate()}-${now.getFullYear()}`;
+  }
+  return `https://polymarket.com/event/${kind}-temperature-in-${city}-on-${datePart}`;
+}
 
 export async function fetchSnapshot(): Promise<Snapshot> {
   const res = await fetch(`${API_URL}/api/snapshot`, { cache: "no-store" });

@@ -1,18 +1,24 @@
 # WeatherBuyEnd Phase-1 — NO-eliminated sleeve (paper default)
+# Gates aligned to HighTempTation 0x6011… expectancy (hard METAR elim only).
 mode: paper  # paper | live  (live also requires LIVE_TRADING=true)
 
 bankroll_usd: 500
-base_stake_usd: 10
+base_stake_usd: 2
 stake_mult: 1.0
 
 no_eliminated:
   enabled: true
   max_hours_to_noon: 6
-  min_no_price: 0.80
-  max_no_price: 0.985
-  min_net_edge: 0.015
+  prefer_post_noon: true          # reject pre-noon (hours > 0); wallet median ~−1h
+  min_no_price: 0.90              # densest profitable band ~0.90–0.985
+  max_no_price: 0.98              # avoid tiny 1–2¢ wins / buying NO too rich
+  min_net_edge: 0.02              # with p_no=0.99 ⇒ effective NO ≲ 0.97
   p_no_if_eliminated: 0.99
-  require_eliminated: true
+  require_eliminated: true        # hard METAR elim only — never soft/forecast NO
+  stake_mult: 1.0
+  scalp_enabled: true             # optional fast SELL NO when book marks up
+  scalp_no_bid: 0.99
+  scalp_min_hold_sec: 3
 
 execution:
   order_type: FOK  # FOK | IOC — taker only
@@ -23,7 +29,7 @@ risk:
   max_markets_per_day: 80
   max_markets_concurrent: 25
   max_daily_notional_usd: 800
-  max_per_fill_usd: 50
+  max_per_fill_usd: 25
   max_daily_loss_usd: 150
   max_metar_age_minutes: 90
   max_venue_error_rate: 0.25

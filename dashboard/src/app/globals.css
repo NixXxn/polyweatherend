@@ -1,19 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #eef2f1;
-  --bg-elev: #f7faf8;
-  --ink: #14201c;
-  --muted: #5a6b64;
-  --line: #c9d5cf;
-  --accent: #0f6e56;
-  --accent-soft: #d7efe6;
-  --warn: #9a5b00;
-  --warn-soft: #f3e2c4;
-  --danger: #a11d2e;
-  --danger-soft: #f6d6db;
-  --ok: #0f6e56;
-  --ok-soft: #d7efe6;
+  --bg: #e8efe9;
+  --bg-elev: #f5f9f6;
+  --ink: #122019;
+  --muted: #5a6e64;
+  --line: #c5d4cb;
+  --accent: #0d5f4a;
+  --accent-soft: #d4ebe2;
+  --warn: #8a5200;
+  --warn-soft: #f2e4c8;
+  --danger: #9c1c2c;
+  --danger-soft: #f5d4d9;
+  --ok: #0d5f4a;
+  --ok-soft: #d4ebe2;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @theme inline {
@@ -34,14 +35,72 @@
 
 body {
   background:
-    radial-gradient(1200px 500px at 10% -10%, #d9ebe4 0%, transparent 55%),
-    radial-gradient(900px 400px at 100% 0%, #e4ebe8 0%, transparent 50%),
-    var(--bg);
+    radial-gradient(1100px 480px at 8% -12%, #cfe4da 0%, transparent 58%),
+    radial-gradient(800px 380px at 100% 0%, #dfe8e2 0%, transparent 52%),
+    linear-gradient(180deg, #eef4ef 0%, var(--bg) 40%);
   color: var(--ink);
   font-family: var(--font-display), ui-sans-serif, sans-serif;
   min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
 }
 
 .mono {
   font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-armed {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.anim-rise {
+  animation: rise-in 0.35s var(--ease) both;
+}
+
+.armed-glow {
+  animation: pulse-armed 2.4s ease-in-out infinite;
+}
+
+.tap {
+  transition:
+    transform 0.15s var(--ease),
+    background-color 0.15s var(--ease),
+    opacity 0.15s var(--ease);
+}
+
+.tap:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.tap:disabled {
+  opacity: 0.55;
+}
+
+.pm-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 35%, transparent);
+  transition: border-color 0.15s var(--ease);
+}
+
+.pm-link:active {
+  border-color: var(--accent);
 }
