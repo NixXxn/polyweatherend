@@ -38,6 +38,10 @@ class StakeBody(BaseModel):
     multiplier: float = Field(ge=0.0, le=5.0)
 
 
+class BudgetBody(BaseModel):
+    budget_usd: float = Field(ge=10.0, le=1_000_000.0)
+
+
 def _resolve_ui_dir() -> Path | None:
     env = os.getenv("WEATHERBUY_UI_DIR")
     candidates = []
@@ -210,6 +214,15 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
     def api_stake(body: StakeBody) -> dict[str, Any]:
         eng = require_engine()
         eng.set_stake_mult(body.multiplier)
+        return eng.store.snapshot()["controls"]
+
+    @app.post("/api/controls/budget")
+    def api_budget(body: BudgetBody) -> dict[str, Any]:
+        eng = require_engine()
+        try:
+            eng.set_budget(body.budget_usd)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         return eng.store.snapshot()["controls"]
 
     # Mount UI last so /api and /health win route matching.

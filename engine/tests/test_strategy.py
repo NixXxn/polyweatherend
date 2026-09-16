@@ -69,6 +69,35 @@ def test_small_stake_no_weak_bump():
     assert stake_usd({"base_stake_usd": 2}, edge=0.07) == 2.5
 
 
+def test_budget_ticket_scales_and_caps_deploy():
+    from weatherbuy.strategy import budget_ticket_usd
+
+    strat = {"base_stake_usd": 2, "bankroll_usd": 500}
+    size, why = budget_ticket_usd(
+        strat, budget_usd=500, open_notional=0, edge=0.03, max_deploy_frac=0.75
+    )
+    assert why == "ok"
+    assert size == 2.0
+
+    size2, _ = budget_ticket_usd(
+        strat, budget_usd=1000, open_notional=0, edge=0.03, max_deploy_frac=0.75
+    )
+    assert size2 == 4.0  # 2× budget vs ref
+
+    # Near 75% deploy cap — tiny remaining
+    size3, why3 = budget_ticket_usd(
+        strat, budget_usd=500, open_notional=374.5, edge=0.03, max_deploy_frac=0.75
+    )
+    assert why3 == "ok"
+    assert size3 <= 0.5 + 1e-9 or size3 <= 500 * 0.75 - 374.5
+
+    size4, why4 = budget_ticket_usd(
+        strat, budget_usd=500, open_notional=375, edge=0.03, max_deploy_frac=0.75
+    )
+    assert size4 == 0.0
+    assert why4 == "budget_fully_deployed"
+
+
 def test_polymarket_url():
     url = polymarket_event_url(city_slug="nyc", kind="highest", end_date="2026-09-16")
     assert url.startswith("https://polymarket.com/event/")

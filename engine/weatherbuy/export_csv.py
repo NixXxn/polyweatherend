@@ -29,6 +29,10 @@ TRADE_COLUMNS = [
     "status",
     "question",
     "reason",
+    "budget_usd",
+    "gains_usd",
+    "open_notional",
+    "deployable_usd",
 ]
 
 
@@ -38,6 +42,14 @@ def _row(values: dict[str, Any]) -> dict[str, Any]:
 
 def build_analysis_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    status = snapshot.get("status") or {}
+    pnl = snapshot.get("pnl") or {}
+    money_ctx = {
+        "budget_usd": status.get("budget_usd", pnl.get("budget_usd")),
+        "gains_usd": status.get("gains_usd", pnl.get("gains_usd", status.get("pnl_today"))),
+        "open_notional": status.get("open_notional", pnl.get("open_notional")),
+        "deployable_usd": status.get("deployable_usd", pnl.get("deployable_usd")),
+    }
 
     for s in snapshot.get("settlements") or []:
         result = str(s.get("result") or "").lower()
@@ -63,6 +75,7 @@ def build_analysis_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "status": s.get("status") or "settled",
                     "question": s.get("question"),
                     "reason": s.get("reason"),
+                    **money_ctx,
                 }
             )
         )
@@ -92,6 +105,7 @@ def build_analysis_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "latency_ms": f.get("latency_ms"),
                     "status": f.get("status"),
                     "question": f.get("question"),
+                    **money_ctx,
                 }
             )
         )
@@ -113,6 +127,7 @@ def build_analysis_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "status": "skipped",
                     "question": sk.get("question"),
                     "reason": sk.get("reason"),
+                    **money_ctx,
                 }
             )
         )

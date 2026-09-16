@@ -23,7 +23,12 @@ from .metar import (
 )
 from .risk import RiskGate
 from .store import Store
-from .strategy import evaluate_no_eliminated, no_eliminated_cfg, polymarket_event_url, stake_usd
+from .strategy import (
+    budget_ticket_usd,
+    evaluate_no_eliminated,
+    no_eliminated_cfg,
+    polymarket_event_url,
+)
 from .venue import Venue
 
 logger = logging.getLogger(__name__)
@@ -60,6 +65,36 @@ class ExecEngine:
         self._wins = 0
         self._losses = 0
         self._use_mock_metar = bool(paper.get("mock_metar_on_failure", True))
+        self._budget_usd = self._resolve_budget()
+        self._max_deploy_frac = float((self.strategy.get("risk") or {}).get("max_deploy_frac", 0.75))
+
+    def _resolve_budget(self) -> float:
+        """Persisted controls → env BUDGET_USD → strategy bankroll."""
+        snap = self.store.snapshot()
+        controls = snap.get("controls") or {}
+        for key in ("budget_usd", "bankroll_usd"):
+            if controls.get(key) is not None:
+                try:
+                    v = float(controls[key])
+                    if v > 0:
+                        return v
+                except (TypeError, ValueError):
+                    pass
+        if self.settings.budget_usd is not None:
+            try:
+                v = float(self.settings.budget_usd)
+                if v > 0:
+                    return v
+            except (TypeError, ValueError):
+                pass
+        return float(self.strategy.get("bankroll_usd") or self.strategy.get("budget_usd") or 500.0)
+
+    def _open_notional(self) -> float:
+        return sum(float(p.get("size_usd") or 0) for p in self._open.values())
+
+    def _deployable(self) -> float:
+        max_open = self._budget_usd * self._max_deploy_frac
+        return max(0.0, max_open - self._open_notional())
 
     def start_background(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -271,7 +306,24 @@ class ExecEngine:
                 edge=decision.net_edge,
             )
             return
-        size = stake_usd(self.strategy, edge=decision.net_edge) * self.risk.state.stake_multiplier
+        size, size_why = budget_ticket_usd(
+            self.strategy,
+            budget_usd=self._budget_usd,
+            open_notional=self._open_notional(),
+            edge=decision.net_edge,
+            stake_multiplier=self.risk.state.stake_multiplier,
+            max_deploy_frac=self._max_deploy_frac,
+            max_per_fill_usd=self.risk.max_per_fill_usd,
+        )
+        if size <= 0:
+            self._skip(
+                city=city,
+                market=market,
+                reason=size_why,
+                no_price=decision.no_price,
+                edge=decision.net_edge,
+            )
+            return
         ask = float(quote.no_ask or quote.no_mid or decision.no_price)
         age = None if not st else st.obs_age_minutes
         # Paper/mock: don't stall on slightly stale IEM ages
@@ -284,6 +336,8 @@ class ExecEngine:
             metar_age_minutes=age,
             venue_error_rate=self.venue.error_rate,
             already_open=market.market_id in self._open,
+            open_notional=self._open_notional(),
+            budget_usd=self._budget_usd,
         )
         if not ok:
             self._skip(
@@ -470,6 +524,9 @@ class ExecEngine:
             worst_age = st.obs_age_minutes if worst_age is None else max(worst_age, st.obs_age_minutes)
 
         snap = self.store.snapshot()
+        open_notional = round(self._open_notional(), 2)
+        deployable = round(self._deployable(), 2)
+        gains = round(self.risk.state.daily_realized_pnl + unreal, 2)
         status = {
             "armed": not self.risk.state.killed and self.risk.state.sleeve_no_eliminated,
             "killed": self.risk.state.killed,
@@ -477,9 +534,16 @@ class ExecEngine:
             "mode": "live" if self.settings.is_live else "paper",
             "mock_markets": self.settings.mock_markets or not self.settings.pmxt_api_key,
             "open_no_count": len(positions),
-            "pnl_today": round(self.risk.state.daily_realized_pnl + unreal, 2),
+            "budget_usd": round(self._budget_usd, 2),
+            "gains_usd": gains,
+            "pnl_today": gains,
             "realized_pnl": round(self.risk.state.daily_realized_pnl, 2),
             "unrealized_pnl": round(unreal, 2),
+            "open_notional": open_notional,
+            "deployable_usd": deployable,
+            "max_deploy_frac": self._max_deploy_frac,
+            "cash_reserve_usd": round(self._budget_usd - open_notional, 2),
+            "equity_usd": round(self._budget_usd + gains, 2),
             "wins": self._wins,
             "losses": self._losses,
             "metar_age_worst_min": None if worst_age is None else round(worst_age, 1),
@@ -498,9 +562,15 @@ class ExecEngine:
         self.store.set_positions(positions)
         self.store.set_pnl(
             {
+                "budget_usd": status["budget_usd"],
+                "gains_usd": gains,
                 "realized": status["realized_pnl"],
                 "unrealized": status["unrealized_pnl"],
-                "today": status["pnl_today"],
+                "today": gains,
+                "open_notional": open_notional,
+                "deployable_usd": deployable,
+                "max_deploy_frac": self._max_deploy_frac,
+                "equity_usd": status["equity_usd"],
                 "wins": self._wins,
                 "losses": self._losses,
             }
@@ -508,6 +578,12 @@ class ExecEngine:
         self.store.set_controls(
             {
                 **self.risk.snapshot(),
+                "budget_usd": status["budget_usd"],
+                "bankroll_usd": status["budget_usd"],
+                "open_notional": open_notional,
+                "deployable_usd": deployable,
+                "max_deploy_frac": self._max_deploy_frac,
+                "gains_usd": gains,
                 "trading_mode": status["mode"],
                 "live_trading_flag": self.settings.live_trading,
             }
@@ -527,4 +603,12 @@ class ExecEngine:
 
     def set_stake_mult(self, mult: float) -> None:
         self.risk.state.stake_multiplier = max(0.0, min(5.0, float(mult)))
+        self._publish()
+
+    def set_budget(self, budget_usd: float) -> None:
+        """Persist operating budget (dashboard + ledger)."""
+        v = float(budget_usd)
+        if v < 10 or v > 1_000_000:
+            raise ValueError("budget_usd must be between 10 and 1000000")
+        self._budget_usd = round(v, 2)
         self._publish()

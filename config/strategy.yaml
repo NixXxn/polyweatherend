@@ -2,8 +2,8 @@
 # Gates aligned to HighTempTation 0x6011… expectancy (hard METAR elim only).
 mode: paper  # paper | live  (live also requires LIVE_TRADING=true)
 
-bankroll_usd: 500
-base_stake_usd: 2
+bankroll_usd: 500          # default budget (override via UI / BUDGET_USD)
+base_stake_usd: 2          # ticket at reference bankroll; scales with budget
 stake_mult: 1.0
 
 no_eliminated:
@@ -33,6 +33,7 @@ risk:
   max_daily_loss_usd: 150
   max_metar_age_minutes: 90
   max_venue_error_rate: 0.25
+  max_deploy_frac: 0.75       # ≤75% of budget in open bets (25% cash reserve)
 
 loop:
   metar_poll_sec: 45

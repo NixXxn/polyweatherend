@@ -70,7 +70,7 @@ def evaluate_no_eliminated(
 
 
 def stake_usd(strategy: dict[str, Any], *, edge: float | None = None) -> float:
-    """Many small diversified tickets — never size up on weak elim."""
+    """Reference ticket at configured bankroll — never size up on weak elim."""
     base = float(strategy.get("base_stake_usd", 2))
     mult = float((strategy.get("no_eliminated") or {}).get("stake_mult", 1.0))
     conf = 1.0
@@ -78,6 +78,47 @@ def stake_usd(strategy: dict[str, Any], *, edge: float | None = None) -> float:
     if edge is not None and edge >= 0.06:
         conf = 1.25
     return round(base * mult * conf, 2)
+
+
+def budget_ticket_usd(
+    strategy: dict[str, Any],
+    *,
+    budget_usd: float,
+    open_notional: float,
+    edge: float | None = None,
+    stake_multiplier: float = 1.0,
+    max_deploy_frac: float = 0.75,
+    max_per_fill_usd: float = 25.0,
+    min_ticket_usd: float = 0.50,
+) -> tuple[float, str]:
+    """
+    Size a ticket from budget with a 25% cash reserve.
+
+    Max open notional = max_deploy_frac * budget (default 75%).
+    Deployable = max(0, max_open - open_notional).
+    Ticket scales with budget / reference bankroll and remaining capacity fraction.
+    Hard-elim gates stay separate — this only sizes.
+    """
+    budget = max(0.0, float(budget_usd))
+    if budget <= 0:
+        return 0.0, "budget_zero"
+    max_open = budget * float(max_deploy_frac)
+    deployable = max(0.0, max_open - float(open_notional))
+    if deployable < min_ticket_usd:
+        return 0.0, "budget_fully_deployed"
+
+    ref = float(strategy.get("bankroll_usd") or strategy.get("budget_usd") or 500.0)
+    ref = max(ref, 1.0)
+    base = stake_usd(strategy, edge=edge) * max(0.0, float(stake_multiplier))
+    # Scale with configured budget vs reference bankroll
+    scaled = base * (budget / ref)
+    # Soft-scale with remaining deployable capacity (full size when book empty)
+    rem_frac = deployable / max(max_open, 1e-9)
+    size = scaled * max(0.35, min(1.0, rem_frac))
+    size = min(size, deployable, float(max_per_fill_usd), budget * 0.05)
+    if size < min_ticket_usd:
+        return 0.0, "ticket_too_small"
+    return round(size, 2), "ok"
 
 
 def polymarket_event_url(

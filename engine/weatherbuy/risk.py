@@ -38,6 +38,7 @@ class RiskGate:
         self.max_daily_loss_usd = float(raw.get("max_daily_loss_usd", 100))
         self.max_metar_age_minutes = float(raw.get("max_metar_age_minutes", 45))
         self.max_venue_error_rate = float(raw.get("max_venue_error_rate", 0.25))
+        self.max_deploy_frac = float(raw.get("max_deploy_frac", 0.75))
         self.state = RiskState()
 
     def allow(
@@ -49,6 +50,8 @@ class RiskGate:
         metar_age_minutes: float | None,
         venue_error_rate: float,
         already_open: bool,
+        open_notional: float = 0.0,
+        budget_usd: float | None = None,
     ) -> tuple[bool, str]:
         self.state.reset_if_new_day()
         if self.state.killed:
@@ -67,6 +70,10 @@ class RiskGate:
             return False, "max_per_fill"
         if self.state.daily_notional + size_usd > self.max_daily_notional_usd:
             return False, "max_daily_notional"
+        if budget_usd is not None and budget_usd > 0:
+            max_open = float(budget_usd) * self.max_deploy_frac
+            if float(open_notional) + float(size_usd) > max_open + 1e-9:
+                return False, "budget_deploy_cap"
         if self.state.daily_realized_pnl <= -abs(self.max_daily_loss_usd):
             self.kill("daily_loss")
             return False, "daily_loss"
@@ -109,6 +116,7 @@ class RiskGate:
                 "max_per_fill_usd": self.max_per_fill_usd,
                 "max_daily_loss_usd": self.max_daily_loss_usd,
                 "max_metar_age_minutes": self.max_metar_age_minutes,
+                "max_deploy_frac": self.max_deploy_frac,
             },
             "ts": datetime.now(timezone.utc).isoformat(),
         }

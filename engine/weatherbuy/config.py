@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Ops
     kill_switch_default: bool = Field(default=False, alias="KILL_SWITCH")
     city_roles: str = Field(default="paper,strict,metar", alias="CITY_ROLES")
+    # Default operating budget (UI can override; persisted in ledger state)
+    budget_usd: float | None = Field(default=None, alias="BUDGET_USD")
 
     @property
     def is_live(self) -> bool:

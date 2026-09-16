@@ -16,6 +16,11 @@ function money(n: number | undefined | null) {
   return `${sign}${n.toFixed(2)}`;
 }
 
+function usd(n: number | undefined | null) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
 function badgeClass(badge: string) {
   switch (badge) {
     case "ELIM":
@@ -56,6 +61,8 @@ export default function OpsDashboard() {
   const [tab, setTab] = useState<"cities" | "positions" | "fills" | "skips">(
     "cities",
   );
+  const [budgetDraft, setBudgetDraft] = useState("");
+  const [editingBudget, setEditingBudget] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -73,6 +80,13 @@ export default function OpsDashboard() {
     return () => clearInterval(id);
   }, [reload]);
 
+  const liveBudget = snap?.status?.budget_usd ?? snap?.controls?.budget_usd;
+  useEffect(() => {
+    if (!editingBudget && liveBudget != null) {
+      setBudgetDraft(String(liveBudget));
+    }
+  }, [liveBudget, editingBudget]);
+
   const run = (fn: () => Promise<void>) => {
     startTransition(async () => {
       try {
@@ -84,6 +98,16 @@ export default function OpsDashboard() {
     });
   };
 
+  const applyBudget = () => {
+    const v = Number(budgetDraft);
+    if (!Number.isFinite(v) || v < 10) {
+      setError("Budget must be at least $10");
+      return;
+    }
+    setEditingBudget(false);
+    run(() => postControl("/api/controls/budget", { budget_usd: v }));
+  };
+
   const status = snap?.status;
   const armed = Boolean(status?.armed);
   const cities = snap?.cities ?? [];
@@ -91,6 +115,11 @@ export default function OpsDashboard() {
   const fills = snap?.fills ?? [];
   const skips = snap?.skips ?? [];
   const settlements = snap?.settlements ?? [];
+  const budget = status?.budget_usd ?? snap?.controls?.budget_usd;
+  const gains = status?.gains_usd ?? status?.pnl_today ?? 0;
+  const openNotional = status?.open_notional ?? 0;
+  const deployable = status?.deployable_usd ?? 0;
+  const deployFrac = status?.max_deploy_frac ?? 0.75;
   const hitRate =
     (status?.wins ?? 0) + (status?.losses ?? 0) > 0
       ? (
@@ -102,21 +131,53 @@ export default function OpsDashboard() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col gap-5 px-4 pb-14 pt-6">
-      <header className="anim-rise flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[1.65rem] font-semibold leading-none tracking-tight text-[var(--accent)]">
-            WeatherBuyEnd
-          </h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Late-day METAR BUY NO · ops
-          </p>
-        </div>
-        <div className="text-right text-[11px] text-[var(--muted)]">
-          <div className="mono font-medium uppercase tracking-wide text-[var(--ink)]">
-            {status?.mode ?? "…"}
+      <header className="anim-rise">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-[1.65rem] font-semibold leading-none tracking-tight text-[var(--accent)]">
+              WeatherBuyEnd
+            </h1>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Late-day METAR BUY NO · ops
+            </p>
           </div>
-          <div className="mono mt-0.5">
-            {status?.mock_markets ? "mock books" : "live books"}
+          <div className="text-right text-[11px] text-[var(--muted)]">
+            <div
+              className={`font-semibold ${armed ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+            >
+              {armed ? "ARMED" : "FLAT"}
+            </div>
+            <div className="mono mt-0.5 uppercase tracking-wide">
+              {status?.mode ?? "…"}
+            </div>
+          </div>
+        </div>
+
+        {/* Can't-miss budget + gains */}
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+              Budget
+            </div>
+            <div className="mono mt-1 text-[1.85rem] font-semibold leading-none tracking-tight text-[var(--ink)]">
+              {usd(budget)}
+            </div>
+            <div className="mono mt-2 text-[11px] text-[var(--muted)]">
+              deploy ≤{Math.round(deployFrac * 100)}% · free {usd(deployable)}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
+              Gains
+            </div>
+            <div
+              className={`mono mt-1 text-[1.85rem] font-semibold leading-none tracking-tight ${gains >= 0 ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+            >
+              {money(gains)}
+            </div>
+            <div className="mono mt-2 text-[11px] text-[var(--muted)]">
+              open {usd(openNotional)} · equity {usd(status?.equity_usd)}
+            </div>
           </div>
         </div>
       </header>
@@ -131,36 +192,11 @@ export default function OpsDashboard() {
       <section
         className={`anim-rise rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4 ${armed ? "armed-glow" : ""}`}
       >
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
-              Sleeve
-            </div>
-            <div
-              className={`mt-1.5 text-2xl font-semibold tracking-tight ${armed ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
-            >
-              {armed ? "ARMED" : "FLAT"}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--muted)]">
-              PnL today
-            </div>
-            <div
-              className={`mono mt-1.5 text-2xl font-medium ${(status?.pnl_today ?? 0) >= 0 ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
-            >
-              {money(status?.pnl_today)}
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {[
             ["Open", status?.open_no_count ?? "—"],
             ["W/L", `${status?.wins ?? 0}/${status?.losses ?? 0}`],
-            [
-              "Hit",
-              hitRate != null ? `${hitRate}%` : "—",
-            ],
+            ["Hit", hitRate != null ? `${hitRate}%` : "—"],
             [
               "METAR",
               status?.metar_age_worst_min != null
@@ -191,6 +227,43 @@ export default function OpsDashboard() {
             Export CSV
           </a>
         </div>
+
+        <label className="mb-3 block">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+            Set budget
+          </span>
+          <div className="mt-1.5 flex gap-2">
+            <input
+              id="budget-input"
+              type="number"
+              min={10}
+              step={10}
+              inputMode="decimal"
+              value={budgetDraft}
+              onFocus={() => setEditingBudget(true)}
+              onBlur={() => setEditingBudget(false)}
+              onChange={(e) => setBudgetDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyBudget();
+              }}
+              className="mono min-h-12 flex-1 rounded-xl border border-[var(--line)] bg-[var(--bg)] px-3 text-base font-medium outline-none focus:border-[var(--accent)]"
+              placeholder="500"
+            />
+            <button
+              type="button"
+              disabled={pending}
+              onClick={applyBudget}
+              className="tap min-h-12 shrink-0 rounded-xl bg-[var(--accent)] px-4 text-sm font-semibold text-white"
+            >
+              Save
+            </button>
+          </div>
+          <span className="mt-1.5 block text-[11px] text-[var(--muted)]">
+            Tickets scale with budget · max {Math.round(deployFrac * 100)}% open
+            at once
+          </span>
+        </label>
+
         <div className="grid grid-cols-2 gap-2.5">
           <button
             disabled={pending}
