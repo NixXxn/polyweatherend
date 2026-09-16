@@ -1,23 +1,29 @@
-"""FastAPI ops API for the mobile dashboard."""
+"""FastAPI ops API + optional static ops dashboard (same PORT for Coolify)."""
 
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import Settings
+from .config import Settings, repo_root
 from .export_csv import TRADE_COLUMNS, build_analysis_rows, filter_rows, rows_to_csv
 from .loop import ExecEngine
 
 logger = logging.getLogger(__name__)
 
 engine: ExecEngine | None = None
+
+# Paths reserved for API / docs — never fall through to SPA.
+_API_PREFIXES = ("api/", "health", "docs", "redoc", "openapi.json")
 
 
 class KillBody(BaseModel):
@@ -30,6 +36,62 @@ class SleeveBody(BaseModel):
 
 class StakeBody(BaseModel):
     multiplier: float = Field(ge=0.0, le=5.0)
+
+
+def _resolve_ui_dir() -> Path | None:
+    env = os.getenv("WEATHERBUY_UI_DIR")
+    candidates = []
+    if env:
+        candidates.append(Path(env))
+    root = repo_root()
+    candidates.extend(
+        [
+            root / "ui",
+            root / "dashboard" / "out",
+            Path("/app/ui"),
+        ]
+    )
+    for p in candidates:
+        if (p / "index.html").is_file():
+            return p
+    return None
+
+
+def _mount_dashboard(app: FastAPI) -> None:
+    ui_dir = _resolve_ui_dir()
+    if ui_dir is None:
+        logger.warning("No static dashboard found; / will 404 until UI is built")
+        return
+
+    next_dir = ui_dir / "_next"
+    if next_dir.is_dir():
+        app.mount("/_next", StaticFiles(directory=next_dir), name="next_assets")
+
+    index = ui_dir / "index.html"
+
+    @app.get("/")
+    async def spa_root() -> FileResponse:
+        return FileResponse(index)
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str) -> FileResponse:
+        lowered = full_path.lstrip("/").lower()
+        if lowered.startswith(_API_PREFIXES) or lowered in {"docs", "redoc", "openapi.json"}:
+            raise HTTPException(404, "Not Found")
+
+        candidate = ui_dir / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        # Next export with trailingSlash: try directory index
+        as_dir = ui_dir / full_path / "index.html"
+        if as_dir.is_file():
+            return FileResponse(as_dir)
+        htmlish = ui_dir / f"{full_path}.html"
+        if htmlish.is_file():
+            return FileResponse(htmlish)
+        return FileResponse(index)
+
+    logger.info("Serving ops dashboard from %s", ui_dir)
 
 
 def create_app(settings: Settings | None = None, start_loop: bool = True) -> FastAPI:
@@ -74,6 +136,7 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
             "last_metar_ts": status.get("last_metar_ts"),
             "last_book_ts": status.get("last_book_ts"),
             "markets": status.get("markets_tracked"),
+            "ui": _resolve_ui_dir() is not None,
         }
 
     @app.get("/api/status")
@@ -149,4 +212,6 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
         eng.set_stake_mult(body.multiplier)
         return eng.store.snapshot()["controls"]
 
+    # Mount UI last so /api and /health win route matching.
+    _mount_dashboard(app)
     return app
