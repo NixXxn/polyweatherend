@@ -34,17 +34,22 @@ Optional Redis: `redis-server` or `docker run -p 6379:6379 redis:7-alpine`. Engi
 
 ## Docker / Coolify
 
-### Option A — Dockerfile mode (default Coolify “Dockerfile” build)
+### Option A — Dockerfile mode (recommended for Coolify)
 
-Root `Dockerfile` builds the **engine + API** (paper by default). Coolify sets `PORT`; health check path: `/health`.
+Root `Dockerfile` is a **multi-stage** build: Next.js ops UI + Python engine/API in **one container / one PORT**.
+
+- `/` → mobile ops dashboard (HTML)
+- `/api/*`, `/health`, `/docs` → FastAPI
+- Browser calls are **same-origin** (`/api/...`) — do **not** set `NEXT_PUBLIC_API_URL` in Coolify for this mode
 
 ```bash
 docker build -t weatherbuyend .
 docker run --rm -p 3847:3847 -e PORT=3847 weatherbuyend
-# → http://127.0.0.1:3847/health
+# → http://127.0.0.1:3847/          (ops UI)
+# → http://127.0.0.1:3847/health    (JSON)
 ```
 
-In Coolify: Build Pack = **Dockerfile**, Dockerfile location = `/Dockerfile` (repo root), Port = `3847` (or whatever Coolify assigns via `PORT`).
+In Coolify: Build Pack = **Dockerfile**, Dockerfile = `/Dockerfile`, Port = Coolify `PORT` (or `3847`). Health path: `/health`.
 
 ### Option B — Compose mode (engine + dashboard + redis)
 
@@ -55,11 +60,21 @@ docker compose up --build
 
 | Service     | Port | Role                        |
 |-------------|------|-----------------------------|
-| `engine`    | 3847 | METAR + exec loop + FastAPI |
-| `dashboard` | 3851 | Next.js mobile ops UI       |
+| `engine`    | 3847 | API + UI (same image)       |
+| `dashboard` | 3851 | Optional separate Next UI   |
 | `redis`     | 6379 | Shared status / heartbeats  |
 
-In Coolify: use **Docker Compose**, compose file `docker-compose.yml`. Inject secrets as env (`PMXT_API_KEY`, etc.) — never bake into the image. Set dashboard `NEXT_PUBLIC_API_URL` to the public engine URL.
+For a **separate** dashboard service, set `NEXT_PUBLIC_API_URL` to the public engine URL. The unified Dockerfile image does not need it.
+
+### Local split (engine + `next dev`)
+
+```bash
+# terminal 1
+PYTHONPATH=engine python -m weatherbuy
+# terminal 2
+cd dashboard && NEXT_PUBLIC_API_URL=http://127.0.0.1:3847 npm run dev
+```
+
 
 ## Live trading (opt-in)
 

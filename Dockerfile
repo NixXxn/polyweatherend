@@ -1,9 +1,19 @@
-# WeatherBuyEnd — Coolify default image (Dockerfile build mode)
-# Builds the paper/live exec engine + FastAPI ops API.
-# Coolify injects PORT; health is /health on that port.
-#
-# Full stack (redis + dashboard): use docker-compose.yml in Coolify Compose mode.
+# WeatherBuyEnd — Coolify single-container image
+# Multi-stage: Next.js static ops UI + Python exec/API on one PORT.
+# Coolify Dockerfile mode: / serves the dashboard; /api/* and /health are the API.
 
+# ---- UI build ----
+FROM node:22-alpine AS ui
+WORKDIR /ui
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+COPY dashboard/ ./
+ENV NEXT_TELEMETRY_DISABLED=1
+# Same-origin API in the browser (empty NEXT_PUBLIC_API_URL → relative /api/...)
+ENV NEXT_PUBLIC_API_URL=
+RUN npm run build
+
+# ---- Runtime ----
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -16,9 +26,11 @@ RUN pip install --no-cache-dir -r /app/engine/requirements.txt
 
 COPY config /app/config
 COPY engine /app/engine
+COPY --from=ui /ui/out /app/ui
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/engine
+ENV WEATHERBUY_UI_DIR=/app/ui
 ENV API_HOST=0.0.0.0
 ENV API_PORT=3847
 ENV PORT=3847

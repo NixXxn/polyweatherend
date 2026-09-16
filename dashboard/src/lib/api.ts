@@ -104,8 +104,7 @@ export type Settlement = {
   ts: string;
 };
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:3847";
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
 export async function fetchSnapshot(): Promise<Snapshot> {
   const res = await fetch(`${API_URL}/api/snapshot`, { cache: "no-store" });
