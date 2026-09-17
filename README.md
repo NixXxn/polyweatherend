@@ -92,11 +92,12 @@ To enable live CLOB orders (tiny caps in `config/strategy.yaml`):
 TRADING_MODE=live
 LIVE_TRADING=true
 MOCK_MARKETS=false
-PMXT_API_KEY=...
-PMXT_WALLET_ADDRESS=...
+PMXT_WALLET_ADDRESS=0xYourPolymarketProxy
+POLY_PRIVATE_KEY=0x...
+# POLY_SIGNATURE_TYPE=2  # browser/MetaMask Gnosis; default 1 = email/magic proxy
 ```
 
-Without both `TRADING_MODE=live` **and** `LIVE_TRADING=true`, orders stay paper.
+`TRADING_MODE=live` **or** `LIVE_TRADING=true` turns on live mode. The ops UI then shows on-chain **Wallet** cash (pUSD/USDC.e) instead of the paper `BUDGET_USD`. Orders are EIP-712 signed and posted to `https://clob.polymarket.com/order` — they will **not** submit without `POLY_PRIVATE_KEY`.
 
 ## Strategy gates
 

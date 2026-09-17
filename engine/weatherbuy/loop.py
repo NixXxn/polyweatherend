@@ -30,6 +30,7 @@ from .strategy import (
     polymarket_event_url,
 )
 from .venue import Venue
+from .wallet import WalletSnapshot, fetch_wallet
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,13 @@ class ExecEngine:
         self._use_mock_metar = bool(paper.get("mock_metar_on_failure", True))
         self._budget_usd = self._resolve_budget()
         self._max_deploy_frac = float((self.strategy.get("risk") or {}).get("max_deploy_frac", 0.75))
+        self._wallet = WalletSnapshot(address=self.settings.wallet_address)
+        self._wallet_ts: float = 0.0
 
     def _resolve_budget(self) -> float:
-        """Persisted controls → env BUDGET_USD → strategy bankroll."""
+        """Live: on-chain wallet cash. Paper: persisted controls → env BUDGET_USD → strategy bankroll."""
+        if self.settings.is_live:
+            return 0.0
         snap = self.store.snapshot()
         controls = snap.get("controls") or {}
         for key in ("budget_usd", "bankroll_usd"):
@@ -116,13 +121,16 @@ class ExecEngine:
         last_book = 0.0
         last_markets = 0.0
         logger.info(
-            "ExecEngine started mode=%s live=%s mock=%s cities=%d",
+            "ExecEngine started mode=%s live=%s live_ready=%s mock=%s wallet=%s cities=%d",
             self.settings.trading_mode,
             self.settings.is_live,
+            self.settings.live_ready,
             self.settings.mock_markets,
+            self.settings.wallet_address,
             len(self.cities),
         )
         self.markets.refresh_markets()
+        self._refresh_wallet(force=True)
         self._publish()
         while not self._stop.is_set():
             now = time.time()
@@ -139,6 +147,7 @@ class ExecEngine:
                 if now - last_book >= book_every:
                     self.markets.refresh_quotes(self._day_states)
                     self._last_book_ts = datetime.now(timezone.utc).isoformat()
+                    self._refresh_wallet()
                     self._settle_paper()
                     self._decide_and_trade()
                     last_book = now
@@ -182,6 +191,26 @@ class ExecEngine:
                 if err and err.startswith("mock"):
                     logger.info("METAR %s using mock fallback", lid)
         self._last_metar_ts = datetime.now(timezone.utc).isoformat()
+
+    def _refresh_wallet(self, force: bool = False) -> None:
+        if not self.settings.is_live:
+            return
+        now = time.time()
+        if not force and now - self._wallet_ts < 20:
+            return
+        self._wallet = fetch_wallet(self.settings)
+        self._wallet_ts = now
+        if self._wallet.error:
+            logger.warning("live wallet: %s", self._wallet.error)
+            return
+        self._budget_usd = float(self._wallet.cash_usd or 0.0)
+        logger.info(
+            "live wallet cash=%.2f positions=%.2f equity=%.2f addr=%s",
+            self._wallet.cash_usd,
+            self._wallet.positions_usd,
+            self._wallet.equity_usd,
+            self._wallet.address,
+        )
 
     def _skip(
         self,
@@ -374,7 +403,7 @@ class ExecEngine:
             "end_date": getattr(market, "end_date", None),
         }
         self.store.append_fill(fill_row)
-        if fill.status in {"filled", "submitted"}:
+        if fill.size_usd > 0 and not str(fill.status).startswith("error") and fill.status != "rejected_depth":
             self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
             pos = {
                 "market_id": market.market_id,
@@ -527,12 +556,28 @@ class ExecEngine:
         open_notional = round(self._open_notional(), 2)
         deployable = round(self._deployable(), 2)
         gains = round(self.risk.state.daily_realized_pnl + unreal, 2)
+        wallet = self._wallet
+        equity = (
+            round(wallet.equity_usd, 2)
+            if self.settings.is_live and wallet.address and wallet.error is None
+            else round(self._budget_usd + gains, 2)
+        )
+        cash_reserve = (
+            round(wallet.cash_usd - open_notional, 2)
+            if self.settings.is_live
+            else round(self._budget_usd - open_notional, 2)
+        )
         status = {
             "armed": not self.risk.state.killed and self.risk.state.sleeve_no_eliminated,
             "killed": self.risk.state.killed,
             "kill_reason": self.risk.state.kill_reason,
             "mode": "live" if self.settings.is_live else "paper",
             "mock_markets": self.settings.mock_markets,
+            "live_ready": self.settings.live_ready,
+            "wallet_address": wallet.address,
+            "wallet_error": wallet.error,
+            "wallet_cash_usd": round(wallet.cash_usd, 2) if wallet.address else None,
+            "wallet_positions_usd": round(wallet.positions_usd, 2) if wallet.address else None,
             "open_no_count": len(positions),
             "budget_usd": round(self._budget_usd, 2),
             "gains_usd": gains,
@@ -542,8 +587,8 @@ class ExecEngine:
             "open_notional": open_notional,
             "deployable_usd": deployable,
             "max_deploy_frac": self._max_deploy_frac,
-            "cash_reserve_usd": round(self._budget_usd - open_notional, 2),
-            "equity_usd": round(self._budget_usd + gains, 2),
+            "cash_reserve_usd": cash_reserve,
+            "equity_usd": equity,
             "wins": self._wins,
             "losses": self._losses,
             "metar_age_worst_min": None if worst_age is None else round(worst_age, 1),
@@ -606,7 +651,9 @@ class ExecEngine:
         self._publish()
 
     def set_budget(self, budget_usd: float) -> None:
-        """Persist operating budget (dashboard + ledger)."""
+        """Persist operating budget (dashboard + ledger). Live mode uses on-chain cash."""
+        if self.settings.is_live:
+            raise ValueError("budget is the on-chain wallet in live mode")
         v = float(budget_usd)
         if v < 10 or v > 1_000_000:
             raise ValueError("budget_usd must be between 10 and 1000000")

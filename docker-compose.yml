@@ -31,6 +31,12 @@ services:
       MOCK_MARKETS: ${MOCK_MARKETS:-false}
       PMXT_API_KEY: ${PMXT_API_KEY:-}
       PMXT_WALLET_ADDRESS: ${PMXT_WALLET_ADDRESS:-}
+      POLY_PRIVATE_KEY: ${POLY_PRIVATE_KEY:-}
+      CLOB_API_KEY: ${CLOB_API_KEY:-}
+      CLOB_SECRET: ${CLOB_SECRET:-}
+      CLOB_PASS_PHRASE: ${CLOB_PASS_PHRASE:-}
+      POLY_SIGNATURE_TYPE: ${POLY_SIGNATURE_TYPE:-}
+      POLYGON_RPC_URL: ${POLYGON_RPC_URL:-https://polygon-bor.publicnode.com}
       CITY_ROLES: ${CITY_ROLES:-paper,strict,metar}
       KILL_SWITCH: ${KILL_SWITCH:-false}
     volumes:

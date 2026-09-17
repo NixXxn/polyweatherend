@@ -18,7 +18,7 @@ def repo_root() -> Path:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     # Modes
     trading_mode: str = Field(default="paper", alias="TRADING_MODE")  # paper|live
@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     pmxt_catalog_url: str = Field(default=CLOB_URL, alias="PMXT_CATALOG_URL")
     pmxt_trade_url: str = Field(default=CLOB_URL, alias="PMXT_TRADE_URL")
     clob_url: str = Field(default=CLOB_URL, alias="CLOB_URL")
+    poly_private_key: str | None = Field(default=None, alias="POLY_PRIVATE_KEY")
+    pmxt_private_key: str | None = Field(default=None, alias="PMXT_PRIVATE_KEY")
+    clob_api_key: str | None = Field(default=None, alias="CLOB_API_KEY")
+    clob_secret: str | None = Field(default=None, alias="CLOB_SECRET")
+    clob_passphrase: str | None = Field(default=None, alias="CLOB_PASS_PHRASE")
+    poly_signature_type: str | None = Field(default=None, alias="POLY_SIGNATURE_TYPE")
+    polygon_rpc_url: str = Field(
+        default="https://polygon-bor.publicnode.com", alias="POLYGON_RPC_URL"
+    )
 
     # Infra
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -50,8 +59,30 @@ class Settings(BaseSettings):
         return CLOB_URL
 
     @property
+    def wallet_address(self) -> str | None:
+        addr = (self.pmxt_wallet_address or "").strip()
+        return addr or None
+
+    @property
+    def signing_key(self) -> str | None:
+        key = (self.poly_private_key or self.pmxt_private_key or "").strip()
+        return key or None
+
+    @property
+    def signature_type(self) -> int:
+        raw = (self.poly_signature_type or "").strip()
+        if raw:
+            return int(raw)
+        # Proxy/funder wallet → POLY_PROXY (email/magic). Override with POLY_SIGNATURE_TYPE=2 for browser Gnosis.
+        return 1 if self.wallet_address else 0
+
+    @property
     def is_live(self) -> bool:
-        return self.trading_mode.lower() == "live" and self.live_trading
+        return self.trading_mode.lower() == "live" or bool(self.live_trading)
+
+    @property
+    def live_ready(self) -> bool:
+        return self.is_live and bool(self.signing_key)
 
 
 def load_yaml(path: Path | str) -> dict[str, Any]:

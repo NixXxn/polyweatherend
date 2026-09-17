@@ -135,6 +135,9 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
         return {
             "ok": True,
             "mode": status.get("mode"),
+            "live_ready": status.get("live_ready"),
+            "wallet_address": status.get("wallet_address"),
+            "wallet_cash_usd": status.get("wallet_cash_usd"),
             "armed": status.get("armed"),
             "redis": ping.get("redis"),
             "last_metar_ts": status.get("last_metar_ts"),
