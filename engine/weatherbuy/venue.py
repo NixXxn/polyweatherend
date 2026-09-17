@@ -1,4 +1,4 @@
-"""Order venue — paper fills by default; live PMXT behind flags."""
+"""Order venue — paper fills by default; live CLOB behind flags."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import httpx
 
-from .config import Settings
+from .config import CLOB_URL, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class Venue:
                 edge=edge,
             )
 
-        # Live PMXT path
+        # Live Polymarket CLOB path
         if not self.settings.pmxt_api_key:
             self.errors += 1
             raise RuntimeError("LIVE_TRADING set but PMXT_API_KEY missing")
@@ -120,10 +120,11 @@ class Venue:
                 "size": shares,
                 "amount_usd": size_usd,
             }
-            url = f"{self.settings.pmxt_trade_url.rstrip('/')}/v0/orders"
+            url = f"{CLOB_URL.rstrip('/')}/order"
             headers = {
                 "Authorization": f"Bearer {self.settings.pmxt_api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "WeatherBuyEnd/0.1",
             }
             if self.settings.pmxt_wallet_address:
                 headers["X-Wallet-Address"] = self.settings.pmxt_wallet_address
@@ -131,7 +132,7 @@ class Venue:
             latency = (time.perf_counter() - t0) * 1000
             if r.status_code >= 400:
                 self.errors += 1
-                logger.error("PMXT order failed %s: %s", r.status_code, r.text[:300])
+                logger.error("CLOB order failed %s: %s", r.status_code, r.text[:300])
                 return Fill(
                     fill_id=str(uuid.uuid4()),
                     market_id=market_id,

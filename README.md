@@ -1,11 +1,11 @@
 # WeatherBuyEnd
 
-Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper by default; live PMXT taker orders behind explicit flags.
+Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper by default; live CLOB taker orders behind explicit flags.
 
 ## What it does
 
 1. Polls IEM ASOS/METAR per city station.
-2. Tracks weather bucket markets + NO book (PMXT catalog when `PMXT_API_KEY` is set; mock books if `MOCK_MARKETS=true` or no key).
+2. Tracks weather bucket markets + NO book from **`https://clob.polymarket.com`** (mock books only if `MOCK_MARKETS=true`).
 3. Gates entries with **hard METAR elim only**, post-noon preference (≤6h to noon), NO band `0.90–0.98` with min edge.
 4. **Budget-aware sizing:** tickets scale with operating budget; max **75%** of budget may be open at once (25% cash reserve). Set budget from the ops UI or `BUDGET_USD`.
 5. Scalp-or-hold: optional SELL NO near `0.99` when the book marks up; else hold-to-resolve.
@@ -16,7 +16,7 @@ Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature
 
 ```bash
 cp .env.example .env
-# optional: paste PMXT_API_KEY for catalog (still paper unless LIVE_TRADING=true)
+# optional: paste PMXT_API_KEY for live CLOB orders (still paper unless LIVE_TRADING=true)
 
 # API + loop
 python3.12 -m venv .venv
@@ -86,7 +86,7 @@ Defaults are safe:
 - `LIVE_TRADING=false`
 - `MOCK_MARKETS=false`
 
-To enable live PMXT orders (tiny caps in `config/strategy.yaml`):
+To enable live CLOB orders (tiny caps in `config/strategy.yaml`):
 
 ```env
 TRADING_MODE=live

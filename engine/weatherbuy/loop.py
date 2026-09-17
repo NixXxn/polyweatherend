@@ -440,7 +440,7 @@ class ExecEngine:
                 if (
                     bid is not None
                     and bid < scalp_bid
-                    and (self.settings.mock_markets or not self.settings.pmxt_api_key)
+                    and self.settings.mock_markets
                     and pos.get("entry_elim")
                     and still_elim is not False
                 ):
@@ -532,7 +532,7 @@ class ExecEngine:
             "killed": self.risk.state.killed,
             "kill_reason": self.risk.state.kill_reason,
             "mode": "live" if self.settings.is_live else "paper",
-            "mock_markets": self.settings.mock_markets or not self.settings.pmxt_api_key,
+            "mock_markets": self.settings.mock_markets,
             "open_no_count": len(positions),
             "budget_usd": round(self._budget_usd, 2),
             "gains_usd": gains,

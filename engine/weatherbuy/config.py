@@ -9,6 +9,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+CLOB_URL = "https://clob.polymarket.com"
+
+
 def repo_root() -> Path:
     # engine/weatherbuy/config.py -> repo root
     return Path(__file__).resolve().parents[2]
@@ -22,11 +25,12 @@ class Settings(BaseSettings):
     live_trading: bool = Field(default=False, alias="LIVE_TRADING")
     mock_markets: bool = Field(default=False, alias="MOCK_MARKETS")
 
-    # Venue
+    # Venue — market data and live orders always hit Polymarket CLOB
     pmxt_api_key: str | None = Field(default=None, alias="PMXT_API_KEY")
     pmxt_wallet_address: str | None = Field(default=None, alias="PMXT_WALLET_ADDRESS")
-    pmxt_catalog_url: str = Field(default="https://api.pmxt.dev", alias="PMXT_CATALOG_URL")
-    pmxt_trade_url: str = Field(default="https://trade.pmxt.dev", alias="PMXT_TRADE_URL")
+    pmxt_catalog_url: str = Field(default=CLOB_URL, alias="PMXT_CATALOG_URL")
+    pmxt_trade_url: str = Field(default=CLOB_URL, alias="PMXT_TRADE_URL")
+    clob_url: str = Field(default=CLOB_URL, alias="CLOB_URL")
 
     # Infra
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -40,6 +44,10 @@ class Settings(BaseSettings):
     city_roles: str = Field(default="paper,strict,metar", alias="CITY_ROLES")
     # Default operating budget (UI can override; persisted in ledger state)
     budget_usd: float | None = Field(default=None, alias="BUDGET_USD")
+
+    @property
+    def venue_url(self) -> str:
+        return CLOB_URL
 
     @property
     def is_live(self) -> bool:
