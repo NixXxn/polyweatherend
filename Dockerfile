@@ -36,7 +36,7 @@ ENV API_PORT=3847
 ENV PORT=3847
 ENV TRADING_MODE=paper
 ENV LIVE_TRADING=false
-ENV MOCK_MARKETS=true
+ENV MOCK_MARKETS=false
 ENV CITY_ROLES=paper,strict
 
 RUN mkdir -p /app/data/ledger /app/logs

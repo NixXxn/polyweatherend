@@ -28,7 +28,7 @@ services:
       PORT: "3847"
       TRADING_MODE: ${TRADING_MODE:-paper}
       LIVE_TRADING: ${LIVE_TRADING:-false}
-      MOCK_MARKETS: ${MOCK_MARKETS:-true}
+      MOCK_MARKETS: ${MOCK_MARKETS:-false}
       PMXT_API_KEY: ${PMXT_API_KEY:-}
       PMXT_WALLET_ADDRESS: ${PMXT_WALLET_ADDRESS:-}
       CITY_ROLES: ${CITY_ROLES:-paper,strict,metar}

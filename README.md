@@ -1,11 +1,11 @@
 # WeatherBuyEnd
 
-Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper/mock by default; live PMXT taker orders behind explicit flags.
+Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper by default; live PMXT taker orders behind explicit flags.
 
 ## What it does
 
 1. Polls IEM ASOS/METAR per city station.
-2. Tracks weather bucket markets + NO book (mock books by default; PMXT catalog when configured).
+2. Tracks weather bucket markets + NO book (PMXT catalog when `PMXT_API_KEY` is set; mock books if `MOCK_MARKETS=true` or no key).
 3. Gates entries with **hard METAR elim only**, post-noon preference (≤6h to noon), NO band `0.90–0.98` with min edge.
 4. **Budget-aware sizing:** tickets scale with operating budget; max **75%** of budget may be open at once (25% cash reserve). Set budget from the ops UI or `BUDGET_USD`.
 5. Scalp-or-hold: optional SELL NO near `0.99` when the book marks up; else hold-to-resolve.
@@ -23,7 +23,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r engine/requirements.txt
 export PYTHONPATH=engine
-export MOCK_MARKETS=true TRADING_MODE=paper LIVE_TRADING=false
+export MOCK_MARKETS=false TRADING_MODE=paper LIVE_TRADING=false
 python -m weatherbuy
 # → http://127.0.0.1:3847/health
 
@@ -84,7 +84,7 @@ Defaults are safe:
 
 - `TRADING_MODE=paper`
 - `LIVE_TRADING=false`
-- `MOCK_MARKETS=true`
+- `MOCK_MARKETS=false`
 
 To enable live PMXT orders (tiny caps in `config/strategy.yaml`):
 

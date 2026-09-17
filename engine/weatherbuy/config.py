@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # Modes
     trading_mode: str = Field(default="paper", alias="TRADING_MODE")  # paper|live
     live_trading: bool = Field(default=False, alias="LIVE_TRADING")
-    mock_markets: bool = Field(default=True, alias="MOCK_MARKETS")
+    mock_markets: bool = Field(default=False, alias="MOCK_MARKETS")
 
     # Venue
     pmxt_api_key: str | None = Field(default=None, alias="PMXT_API_KEY")
