@@ -16,9 +16,10 @@ function money(n: number | undefined | null) {
   return `${sign}${n.toFixed(2)}`;
 }
 
-function usd(n: number | undefined | null) {
-  if (n == null || Number.isNaN(n)) return "—";
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+function shortAddr(addr?: string | null) {
+  if (!addr) return "";
+  if (addr.length < 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 function badgeClass(badge: string) {
@@ -116,6 +117,8 @@ export default function OpsDashboard() {
   const skips = snap?.skips ?? [];
   const settlements = snap?.settlements ?? [];
   const budget = status?.budget_usd ?? snap?.controls?.budget_usd;
+  const isLive = status?.mode === "live";
+  const walletCash = status?.wallet_cash_usd;
   const gains = status?.gains_usd ?? status?.pnl_today ?? 0;
   const openNotional = status?.open_notional ?? 0;
   const deployable = status?.deployable_usd ?? 0;
@@ -157,13 +160,15 @@ export default function OpsDashboard() {
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-              Budget
+              {isLive ? "Wallet" : "Budget"}
             </div>
             <div className="mono mt-1 text-[1.85rem] font-semibold leading-none tracking-tight text-[var(--ink)]">
-              {usd(budget)}
+              {usd(isLive ? (walletCash ?? budget) : budget)}
             </div>
             <div className="mono mt-2 text-[11px] text-[var(--muted)]">
-              deploy ≤{Math.round(deployFrac * 100)}% · free {usd(deployable)}
+              {isLive
+                ? `${shortAddr(status?.wallet_address)} · pos ${usd(status?.wallet_positions_usd)}`
+                : `deploy ≤${Math.round(deployFrac * 100)}% · free ${usd(deployable)}`}
             </div>
           </div>
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
@@ -228,6 +233,16 @@ export default function OpsDashboard() {
           </a>
         </div>
 
+        {isLive && (
+          <div className="mb-3 rounded-xl border border-[var(--warn)]/30 bg-[var(--warn-soft)] px-3 py-2 text-[12px] text-[var(--warn)]">
+            {status?.live_ready
+              ? "Live CLOB — wallet cash from Polygon, orders signed and posted."
+              : "Live mode is on, but POLY_PRIVATE_KEY is missing — orders will not submit."}
+            {status?.wallet_error ? ` ${status.wallet_error}` : ""}
+          </div>
+        )}
+
+        {!isLive && (
         <label className="mb-3 block">
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
             Set budget
@@ -263,6 +278,7 @@ export default function OpsDashboard() {
             at once
           </span>
         </label>
+        )}
 
         <div className="grid grid-cols-2 gap-2.5">
           <button

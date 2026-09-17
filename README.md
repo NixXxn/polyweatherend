@@ -1,11 +1,11 @@
 # WeatherBuyEnd
 
-Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper/mock by default; live PMXT taker orders behind explicit flags.
+Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper by default; live CLOB taker orders behind explicit flags.
 
 ## What it does
 
 1. Polls IEM ASOS/METAR per city station.
-2. Tracks weather bucket markets + NO book (mock books by default; PMXT catalog when configured).
+2. Tracks weather bucket markets + NO book from **`https://clob.polymarket.com`** (mock books only if `MOCK_MARKETS=true`).
 3. Gates entries with **hard METAR elim only**, post-noon preference (≤6h to noon), NO band `0.90–0.98` with min edge.
 4. **Budget-aware sizing:** tickets scale with operating budget; max **75%** of budget may be open at once (25% cash reserve). Set budget from the ops UI or `BUDGET_USD`.
 5. Scalp-or-hold: optional SELL NO near `0.99` when the book marks up; else hold-to-resolve.
@@ -16,14 +16,14 @@ Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature
 
 ```bash
 cp .env.example .env
-# optional: paste PMXT_API_KEY for catalog (still paper unless LIVE_TRADING=true)
+# optional: paste PMXT_API_KEY for live CLOB orders (still paper unless LIVE_TRADING=true)
 
 # API + loop
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r engine/requirements.txt
 export PYTHONPATH=engine
-export MOCK_MARKETS=true TRADING_MODE=paper LIVE_TRADING=false
+export MOCK_MARKETS=false TRADING_MODE=paper LIVE_TRADING=false
 python -m weatherbuy
 # → http://127.0.0.1:3847/health
 
@@ -84,19 +84,20 @@ Defaults are safe:
 
 - `TRADING_MODE=paper`
 - `LIVE_TRADING=false`
-- `MOCK_MARKETS=true`
+- `MOCK_MARKETS=false`
 
-To enable live PMXT orders (tiny caps in `config/strategy.yaml`):
+To enable live CLOB orders (tiny caps in `config/strategy.yaml`):
 
 ```env
 TRADING_MODE=live
 LIVE_TRADING=true
 MOCK_MARKETS=false
-PMXT_API_KEY=...
-PMXT_WALLET_ADDRESS=...
+PMXT_WALLET_ADDRESS=0xYourPolymarketProxy
+POLY_PRIVATE_KEY=0x...
+# POLY_SIGNATURE_TYPE=2  # browser/MetaMask Gnosis; default 1 = email/magic proxy
 ```
 
-Without both `TRADING_MODE=live` **and** `LIVE_TRADING=true`, orders stay paper.
+`TRADING_MODE=live` **or** `LIVE_TRADING=true` turns on live mode. The ops UI then shows on-chain **Wallet** cash (pUSD/USDC.e) instead of the paper `BUDGET_USD`. Orders are EIP-712 signed and posted to `https://clob.polymarket.com/order` — they will **not** submit without `POLY_PRIVATE_KEY`.
 
 ## Strategy gates
 

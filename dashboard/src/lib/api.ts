@@ -5,6 +5,11 @@ export type Snapshot = {
     kill_reason?: string;
     mode?: string;
     mock_markets?: boolean;
+    live_ready?: boolean;
+    wallet_address?: string | null;
+    wallet_error?: string | null;
+    wallet_cash_usd?: number | null;
+    wallet_positions_usd?: number | null;
     open_no_count?: number;
     budget_usd?: number;
     gains_usd?: number;
