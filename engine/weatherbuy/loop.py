@@ -435,6 +435,20 @@ class ExecEngine:
             )
             return
         ask = float(quote.no_ask or quote.no_mid or decision.no_price)
+        ex = self.strategy.get("execution") or {}
+        if bool(ex.get("size_to_book_depth", True)):
+            depth = float(getattr(quote, "depth_no_usd", 0) or 0)
+            min_t = 1.0 if self.settings.is_live else 0.50
+            if depth + 1e-9 < min_t:
+                self._skip(
+                    city=city,
+                    market=market,
+                    reason="book_thin",
+                    no_price=decision.no_price,
+                    edge=decision.net_edge,
+                )
+                return
+            size = round(min(size, depth), 2)
         age = None if not st else st.obs_age_minutes
         # Paper/mock: don't stall on slightly stale IEM ages
         if not self.settings.is_live and age is not None and age > self.risk.max_metar_age_minutes:
@@ -445,6 +459,7 @@ class ExecEngine:
             size_usd=size,
             metar_age_minutes=age,
             venue_error_rate=self.venue.error_rate,
+            venue_attempts=self.venue.attempts,
             already_open=market.market_id in self._open,
             open_notional=self._open_notional(),
             budget_usd=self._effective_budget(),
@@ -458,19 +473,30 @@ class ExecEngine:
                 edge=decision.net_edge,
             )
             return
-        fill = self.venue.buy_no_taker(
-            market_id=market.market_id,
-            location_id=city["location_id"],
-            no_token_id=market.no_token_id,
-            ask=ask,
-            size_usd=size,
-            order_type=str((self.strategy.get("execution") or {}).get("order_type", "FOK")),
-            question=market.question,
-            edge=decision.net_edge,
-            depth_usd=float(quote.depth_no_usd or 0),
-            neg_risk=bool(getattr(market, "neg_risk", True)),
-            tick_size=str(getattr(market, "tick_size", "0.01") or "0.01"),
-        )
+        try:
+            fill = self.venue.buy_no_taker(
+                market_id=market.market_id,
+                location_id=city["location_id"],
+                no_token_id=market.no_token_id,
+                ask=ask,
+                size_usd=size,
+                order_type=str((self.strategy.get("execution") or {}).get("order_type", "FOK")),
+                question=market.question,
+                edge=decision.net_edge,
+                depth_usd=float(getattr(quote, "depth_no_usd", 0) or 0),
+                neg_risk=bool(getattr(market, "neg_risk", True)),
+                tick_size=str(getattr(market, "tick_size", "0.01") or "0.01"),
+            )
+        except Exception as e:
+            logger.exception("CLOB BUY NO raised market=%s", market.market_id)
+            self._skip(
+                city=city,
+                market=market,
+                reason=f"clob_error:{type(e).__name__}",
+                no_price=decision.no_price,
+                edge=decision.net_edge,
+            )
+            return
         pm_url = getattr(market, "polymarket_url", None) or polymarket_event_url(
             city_slug=city["polymarket_slug_city"],
             kind=market.kind,
@@ -486,37 +512,45 @@ class ExecEngine:
             "end_date": getattr(market, "end_date", None),
         }
         self.store.append_fill(fill_row)
-        if fill.status in {"filled", "submitted"} and fill.mode == "live":
+        if fill.status not in {"filled", "submitted"}:
+            self._skip(
+                city=city,
+                market=market,
+                reason=str(fill.status),
+                no_price=decision.no_price,
+                edge=decision.net_edge,
+            )
+            if self.settings.is_live:
+                self._live_order_attempts += 1
+            return
+        if fill.mode == "live":
             self._live_order_attempts += 1
             self._live_order_ok += 1
-        elif self.settings.is_live:
-            self._live_order_attempts += 1
-        if fill.status in {"filled", "submitted"}:
-            self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
-            pos = {
-                "market_id": market.market_id,
-                "location_id": city["location_id"],
-                "city": city["polymarket_slug_city"],
-                "side": "BUY_NO",
-                "entry_price": fill.price,
-                "size_usd": fill.size_usd,
-                "shares": fill.shares,
-                "mode": fill.mode,
-                "opened_at": fill.ts,
-                "question": market.question,
-                "status": "open",
-                "mark_no": ask,
-                "unrealized_pnl": 0.0,
-                "edge": decision.net_edge,
-                "fill_id": fill.fill_id,
-                "kind": market.kind,
-                "lo": market.lo,
-                "hi": market.hi,
-                "entry_elim": True,  # hard elim only — honor on settle if METAR drops
-                "polymarket_url": pm_url,
-                "end_date": getattr(market, "end_date", None),
-            }
-            self._open[market.market_id] = pos
+        self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
+        pos = {
+            "market_id": market.market_id,
+            "location_id": city["location_id"],
+            "city": city["polymarket_slug_city"],
+            "side": "BUY_NO",
+            "entry_price": fill.price,
+            "size_usd": fill.size_usd,
+            "shares": fill.shares,
+            "mode": fill.mode,
+            "opened_at": fill.ts,
+            "question": market.question,
+            "status": "open",
+            "mark_no": ask,
+            "unrealized_pnl": 0.0,
+            "edge": decision.net_edge,
+            "fill_id": fill.fill_id,
+            "kind": market.kind,
+            "lo": market.lo,
+            "hi": market.hi,
+            "entry_elim": True,  # hard elim only — honor on settle if METAR drops
+            "polymarket_url": pm_url,
+            "end_date": getattr(market, "end_date", None),
+        }
+        self._open[market.market_id] = pos
 
     def _settle_paper(self) -> None:
         if self.settings.is_live:

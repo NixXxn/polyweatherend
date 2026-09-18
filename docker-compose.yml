@@ -36,7 +36,7 @@ services:
       POLY_API_KEY: ${POLY_API_KEY:-}
       POLY_API_SECRET: ${POLY_API_SECRET:-}
       POLY_API_PASSPHRASE: ${POLY_API_PASSPHRASE:-}
-      POLY_SIGNATURE_TYPE: ${POLY_SIGNATURE_TYPE:-0}
+      POLY_SIGNATURE_TYPE: ${POLY_SIGNATURE_TYPE:-3}
       POLY_FUNDER: ${POLY_FUNDER:-}
       POLY_CLOB_HOST: ${POLY_CLOB_HOST:-https://clob.polymarket.com}
       POLY_GAMMA_URL: ${POLY_GAMMA_URL:-https://gamma-api.polymarket.com}

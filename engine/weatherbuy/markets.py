@@ -571,7 +571,7 @@ class MarketService:
             no_bid=no_bid,
             no_ask=no_ask,
             no_mid=mid,
-            depth_no_usd=float(depth or 50),
+            depth_no_usd=float(depth),
             ts=datetime.now(timezone.utc).isoformat(),
         )
 

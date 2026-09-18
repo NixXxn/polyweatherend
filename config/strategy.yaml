@@ -1,6 +1,6 @@
-# WeatherBuyEnd Phase-1 — NO-eliminated sleeve (paper default)
-# Gates aligned to HighTempTation 0x6011… expectancy (hard METAR elim only).
-mode: paper  # paper | live  (live also requires LIVE_TRADING=true)
+# WeatherBuyEnd Phase-1 — NO-eliminated sleeve (hard METAR elim only).
+# Engine live switch is env TRADING_MODE=live + LIVE_TRADING=true (this field is docs).
+mode: live
 
 bankroll_usd: 500          # default budget (override via UI / BUDGET_USD)
 base_stake_usd: 2          # ticket at reference bankroll; scales with budget
@@ -33,6 +33,7 @@ risk:
   max_daily_loss_usd: 150
   max_metar_age_minutes: 90
   max_venue_error_rate: 0.25
+  min_venue_attempts: 8       # don't flatten on the first thin-book FOK miss
   max_deploy_frac: 0.75       # ≤75% of budget in open bets (25% cash reserve)
 
 loop:

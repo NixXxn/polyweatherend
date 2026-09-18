@@ -296,11 +296,14 @@ class Venue:
         tick_size: str = "0.01",
     ) -> Fill:
         t0 = time.perf_counter()
-        self.attempts += 1
         shares = size_usd / ask if ask > 0 else 0.0
+        live = bool(self.settings.is_live)
 
-        if size_usd > depth_usd + 1e-6 and order_type == "FOK":
-            self.errors += 1
+        if live and (
+            self.settings.mock_markets
+            or not str(no_token_id or "")
+            or str(no_token_id).startswith(("yes-", "no-", "mock"))
+        ):
             return Fill(
                 fill_id=str(uuid.uuid4()),
                 market_id=market_id,
@@ -310,7 +313,26 @@ class Venue:
                 size_usd=0.0,
                 shares=0.0,
                 order_type=order_type,
-                mode="paper" if not self.settings.is_live else "live",
+                mode="live",
+                latency_ms=(time.perf_counter() - t0) * 1000,
+                ts=datetime.now(timezone.utc).isoformat(),
+                status="rejected_mock_token",
+                question=question,
+                edge=edge,
+            )
+
+        if size_usd > depth_usd + 1e-6 and order_type == "FOK":
+            # Thin book — not a venue outage. Caller should clip before submit.
+            return Fill(
+                fill_id=str(uuid.uuid4()),
+                market_id=market_id,
+                location_id=location_id,
+                side="BUY_NO",
+                price=ask,
+                size_usd=0.0,
+                shares=0.0,
+                order_type=order_type,
+                mode="paper" if not live else "live",
                 latency_ms=(time.perf_counter() - t0) * 1000,
                 ts=datetime.now(timezone.utc).isoformat(),
                 status="rejected_depth",
@@ -318,7 +340,7 @@ class Venue:
                 edge=edge,
             )
 
-        if not self.settings.is_live:
+        if not live:
             logger.info(
                 "PAPER FILL city=%s market=%s usd=%.2f ask=%.3f (not live — no CLOB post)",
                 location_id,
@@ -343,12 +365,33 @@ class Venue:
                 edge=edge,
             )
 
+        self.attempts += 1
         if not self.settings.has_poly_creds:
             self.errors += 1
             raise RuntimeError("LIVE_TRADING set but POLY_* CLOB credentials missing")
 
         if self._clob is None:
-            self._clob = self._build_clob_client()
+            try:
+                self._clob = self._build_clob_client()
+            except Exception as e:
+                self.errors += 1
+                logger.exception("CLOB client build failed")
+                return Fill(
+                    fill_id=str(uuid.uuid4()),
+                    market_id=market_id,
+                    location_id=location_id,
+                    side="BUY_NO",
+                    price=ask,
+                    size_usd=0.0,
+                    shares=0.0,
+                    order_type=order_type,
+                    mode="live",
+                    latency_ms=(time.perf_counter() - t0) * 1000,
+                    ts=datetime.now(timezone.utc).isoformat(),
+                    status=f"error:{type(e).__name__}",
+                    question=question,
+                    edge=edge,
+                )
 
         try:
             return self._live_clob_buy_no(
@@ -365,10 +408,25 @@ class Venue:
                 neg_risk=neg_risk,
                 tick_size=tick_size,
             )
-        except Exception:
+        except Exception as e:
             self.errors += 1
             logger.exception("CLOB BUY NO failed market=%s", market_id)
-            raise
+            return Fill(
+                fill_id=str(uuid.uuid4()),
+                market_id=market_id,
+                location_id=location_id,
+                side="BUY_NO",
+                price=ask,
+                size_usd=0.0,
+                shares=0.0,
+                order_type=order_type,
+                mode="live",
+                latency_ms=(time.perf_counter() - t0) * 1000,
+                ts=datetime.now(timezone.utc).isoformat(),
+                status=f"error:{type(e).__name__}",
+                question=question,
+                edge=edge,
+            )
 
     def _live_clob_buy_no(
         self,
@@ -451,7 +509,6 @@ class Venue:
         status = str(resp.get("status") or resp.get("orderStatus") or "submitted")
         err = resp.get("errorMsg") or resp.get("error")
         if err or status.lower() in {"rejected", "canceled", "cancelled", "failed"}:
-            self.errors += 1
             logger.warning("CLOB order not filled: %s", resp)
             return Fill(
                 fill_id=str(resp.get("orderID") or resp.get("id") or uuid.uuid4()),
