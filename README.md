@@ -1,148 +1,73 @@
-# WeatherBuyEnd
+# WeatherBuyEnd **Live**
 
-Late-day Polymarket weather **BUY NO** bot for hard METAR-eliminated temperature buckets (HighTempTation-style sleeve), with a mobile ops dashboard. Phase-1: paper/mock by default; live PMXT taker orders behind explicit flags.
+Live Polymarket CLOB version of the late-day weather **BUY NO** bot (hard METAR elimination sleeve). Same mobile ops dashboard + Coolify single-container deploy as `polyweatherend`, wired to official Polymarket credentials.
 
-## What it does
+**Orders are taker-only** (FOK / FAK). No resting maker quotes.
 
-1. Polls IEM ASOS/METAR per city station.
-2. Tracks weather bucket markets + NO book (mock books by default; PMXT catalog when configured).
-3. Gates entries with **hard METAR elim only**, post-noon preference (≤6h to noon), NO band `0.90–0.98` with min edge.
-4. **Budget-aware sizing:** tickets scale with operating budget; max **75%** of budget may be open at once (25% cash reserve). Set budget from the ops UI or `BUDGET_USD`.
-5. Scalp-or-hold: optional SELL NO near `0.99` when the book marks up; else hold-to-resolve.
-6. Sends **FOK/IOC taker BUY NO** (paper fills unless `LIVE_TRADING=true`).
-7. Mobile ops dashboard: hero **Budget / Gains**, kill / arm / sleeve / stake, city status, Polymarket links, CSV export.
-
-## Quick start (local)
+## Required `.env` (Coolify secrets)
 
 ```bash
-cp .env.example .env
-# optional: paste PMXT_API_KEY for catalog (still paper unless LIVE_TRADING=true)
+POLY_PRIVATE_KEY=0x...
+POLY_API_KEY=...
+POLY_API_SECRET=...
+POLY_API_PASSPHRASE=...
 
-# API + loop
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r engine/requirements.txt
-export PYTHONPATH=engine
-export MOCK_MARKETS=true TRADING_MODE=paper LIVE_TRADING=false
-python -m weatherbuy
-# → http://127.0.0.1:3847/health
+# Optional if using Magic / proxy / deposit wallet (needed for almost all polymarket.com accounts)
+POLY_SIGNATURE_TYPE=3   # 0=EOA, 1=Magic, 2=Gnosis/proxy, 3=deposit wallet
+POLY_FUNDER=            # address on polymarket.com that holds USDC (not the EOA)
 
-# Dashboard (other terminal)
-cd dashboard && npm install && npm run dev -- -p 3851
-# → http://127.0.0.1:3851
-```
-
-Optional Redis: `redis-server` or `docker run -p 6379:6379 redis:7-alpine`. Engine falls back to an in-memory + JSON ledger if Redis is down.
-
-## Docker / Coolify
-
-### Option A — Dockerfile mode (recommended for Coolify)
-
-Root `Dockerfile` is a **multi-stage** build: Next.js ops UI + Python engine/API in **one container / one PORT**.
-
-- `/` → mobile ops dashboard (HTML)
-- `/api/*`, `/health`, `/docs` → FastAPI
-- Browser calls are **same-origin** (`/api/...`) — do **not** set `NEXT_PUBLIC_API_URL` in Coolify for this mode
-
-```bash
-docker build -t weatherbuyend .
-docker run --rm -p 3847:3847 -e PORT=3847 weatherbuyend
-# → http://127.0.0.1:3847/          (ops UI)
-# → http://127.0.0.1:3847/health    (JSON)
-```
-
-In Coolify: Build Pack = **Dockerfile**, Dockerfile = `/Dockerfile`, Port = Coolify `PORT` (or `3847`). Health path: `/health`.
-
-### Option B — Compose mode (engine + dashboard + redis)
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-| Service     | Port | Role                        |
-|-------------|------|-----------------------------|
-| `engine`    | 3847 | API + UI (same image)       |
-| `dashboard` | 3851 | Optional separate Next UI   |
-| `redis`     | 6379 | Shared status / heartbeats  |
-
-For a **separate** dashboard service, set `NEXT_PUBLIC_API_URL` to the public engine URL. The unified Dockerfile image does not need it.
-
-### Local split (engine + `next dev`)
-
-```bash
-# terminal 1
-PYTHONPATH=engine python -m weatherbuy
-# terminal 2
-cd dashboard && NEXT_PUBLIC_API_URL=http://127.0.0.1:3847 npm run dev
-```
-
-
-## Live trading (opt-in)
-
-Defaults are safe:
-
-- `TRADING_MODE=paper`
-- `LIVE_TRADING=false`
-- `MOCK_MARKETS=true`
-
-To enable live PMXT orders (tiny caps in `config/strategy.yaml`):
-
-```env
 TRADING_MODE=live
 LIVE_TRADING=true
 MOCK_MARKETS=false
-PMXT_API_KEY=...
-PMXT_WALLET_ADDRESS=...
+KILL_SWITCH=true        # start FLAT — Arm in the UI when ready
+BUDGET_USD=500
 ```
 
-Without both `TRADING_MODE=live` **and** `LIVE_TRADING=true`, orders stay paper.
+Never commit `.env`. Rotate any key that was pasted into chat or tickets.
 
-## Strategy gates
+## What it does
 
-From `config/strategy.yaml` (aligned with observed HighTempTation sleeve):
+1. Discovers weather temp buckets via **Gamma** (`gamma-api.polymarket.com`).
+2. Quotes NO via public **CLOB** books (`clob.polymarket.com`).
+3. Gates with hard METAR elim + post-noon + NO band `0.90–0.98`.
+4. Sizes tickets from budget (max **75%** open / 25% cash reserve).
+5. Sends **FOK taker BUY NO** through `py-clob-client` using your `POLY_*` creds.
+6. Ops UI: Budget / Gains hero, Arm / Kill, CSV, Polymarket links.
 
-| Gate | Value |
-|------|-------|
-| Hard METAR elim | required |
-| Hours to local noon | ≤ 6 |
-| NO price | 0.80 – 0.985 |
-| Min edge vs `p_no=0.99` | ≥ 0.015 |
-| Order | FOK/IOC taker BUY NO |
-| Hold | resolution (scalp exit = later phase) |
+## Coolify
 
-Cities: `config/cities.yaml` (filter with `CITY_ROLES`).
+- Repo: this GitHub repo · branch `main`
+- Build Pack: **Dockerfile** · Port from `PORT`
+- Health: `/health`
+- Env: paste `POLY_*` + mode flags above (do **not** set `NEXT_PUBLIC_API_URL`)
+- Persist `/app/data` volume for ledger / budget
 
-## API surface
+Same-origin: `/` = UI, `/api/*` = API, `/health` = health.
 
-- `GET /health` — Coolify health
-- `GET /api/snapshot` — status, cities, positions, fills, controls
-- `POST /api/controls/kill` `{ "reason": "manual" }`
-- `POST /api/controls/arm`
-- `POST /api/controls/sleeve` `{ "enabled": true }`
-- `POST /api/controls/stake` `{ "multiplier": 1.0 }`
-
-## Tests
+## Local
 
 ```bash
-source .venv/bin/activate
+cp .env.example .env   # fill POLY_* — never commit
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r engine/requirements.txt
 export PYTHONPATH=engine
-pip install pytest
-pytest engine/tests -q
-```
-
-## Layout
-
-```
-config/           cities + strategy
-engine/           Python exec + FastAPI
-dashboard/        Next.js ops UI
-docker-compose.yml
-.env.example
+# smoke without live: MOCK_MARKETS=true LIVE_TRADING=false TRADING_MODE=paper
+python -m weatherbuy
+# → http://127.0.0.1:3847/
 ```
 
 ## Safety
 
-- Never commit `.env` or API keys.
-- Paper mode is the default path for Coolify first deploys.
-- Global kill switch and METAR-staleness / daily-loss / venue-error circuit breakers are on the hot path.
+- Default **KILL_SWITCH=true** → sleeve starts FLAT until you tap **Arm**.
+- Paper path still works with `TRADING_MODE=paper` + `LIVE_TRADING=false` + `MOCK_MARKETS=true`.
+- EOA wallets need USDC + allowance on Polygon for the exchange contracts.
+
+## Stack
+
+| Piece | Endpoint |
+|-------|----------|
+| Orders / books | `https://clob.polymarket.com` (`POLY_CLOB_HOST`) |
+| Market discovery | `https://gamma-api.polymarket.com` (`POLY_GAMMA_URL`) |
+| Auth | `POLY_PRIVATE_KEY` + `POLY_API_KEY` / `SECRET` / `PASSPHRASE` |
+
+**No PMXT.** Catalog, books, and fills go through Polymarket CLOB + Gamma only.

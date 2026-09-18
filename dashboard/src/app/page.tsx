@@ -110,24 +110,33 @@ export default function OpsDashboard() {
 
   const status = snap?.status;
   const armed = Boolean(status?.armed);
+  const liveClob = Boolean(status?.live_clob);
   const cities = snap?.cities ?? [];
   const positions = snap?.positions ?? [];
   const fills = snap?.fills ?? [];
   const skips = snap?.skips ?? [];
   const settlements = snap?.settlements ?? [];
+  const visibleFills = liveClob
+    ? fills.filter((f) => f.mode === "live")
+    : fills;
+  const liveSettlements = settlements.filter((s) => s.mode === "live");
+  const paperSettlements = settlements.filter((s) => s.mode !== "live");
+  const modeSettlements = liveClob ? liveSettlements : paperSettlements;
+  const wins =
+    modeSettlements.length > 0
+      ? modeSettlements.filter((s) => s.result === "win").length
+      : (status?.wins ?? 0);
+  const losses =
+    modeSettlements.length > 0
+      ? modeSettlements.filter((s) => s.result === "loss").length
+      : (status?.losses ?? 0);
   const budget = status?.budget_usd ?? snap?.controls?.budget_usd;
   const gains = status?.gains_usd ?? status?.pnl_today ?? 0;
   const openNotional = status?.open_notional ?? 0;
   const deployable = status?.deployable_usd ?? 0;
   const deployFrac = status?.max_deploy_frac ?? 0.75;
   const hitRate =
-    (status?.wins ?? 0) + (status?.losses ?? 0) > 0
-      ? (
-          ((status?.wins ?? 0) /
-            ((status?.wins ?? 0) + (status?.losses ?? 0))) *
-          100
-        ).toFixed(0)
-      : null;
+    wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(0) : null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-lg flex-col gap-5 px-4 pb-14 pt-6">
@@ -149,21 +158,24 @@ export default function OpsDashboard() {
             </div>
             <div className="mono mt-0.5 uppercase tracking-wide">
               {status?.mode ?? "…"}
+              {status?.live_clob ? " · CLOB" : status?.mock_markets ? " · mock" : ""}
             </div>
           </div>
         </div>
 
-        {/* Can't-miss budget + gains */}
+        {/* Wallet (live CLOB) vs stake budget (paper cap) */}
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-              Budget
+              {status?.live_clob ? "Wallet" : "Budget"}
             </div>
             <div className="mono mt-1 text-[1.85rem] font-semibold leading-none tracking-tight text-[var(--ink)]">
-              {usd(budget)}
+              {usd(status?.live_clob ? (status?.wallet_usd ?? null) : budget)}
             </div>
             <div className="mono mt-2 text-[11px] text-[var(--muted)]">
-              deploy ≤{Math.round(deployFrac * 100)}% · free {usd(deployable)}
+              {status?.live_clob
+                ? `CLOB USDC · cap ${usd(budget)}`
+                : `deploy ≤${Math.round(deployFrac * 100)}% · free ${usd(deployable)}`}
             </div>
           </div>
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">
@@ -182,6 +194,27 @@ export default function OpsDashboard() {
         </div>
       </header>
 
+      {status?.live_clob && status.wallet_usd == null ? (
+        <div className="anim-rise rounded-2xl border border-[var(--warn)]/25 bg-[var(--warn-soft)] px-3.5 py-2.5 text-sm text-[var(--warn)]">
+          Live CLOB on, but wallet USDC not loaded
+          {status.wallet_error ? ` (${status.wallet_error})` : ""}. Stake cap is still
+          the paper budget {usd(budget)}.
+        </div>
+      ) : null}
+      {status?.live_clob && status.wallet_usd === 0 ? (
+        <div className="anim-rise rounded-2xl border border-[var(--warn)]/25 bg-[var(--warn-soft)] px-3.5 py-2.5 text-sm text-[var(--warn)]">
+          CLOB wallet is $0 (sig type {status.poly_sig_type ?? 0}
+          {status.poly_funder_set ? ", funder set" : ", no POLY_FUNDER"}). If
+          Polymarket.com shows cash, you are likely on a proxy/Magic wallet — set
+          POLY_SIGNATURE_TYPE and POLY_FUNDER.
+        </div>
+      ) : null}
+      {status?.live_clob && (status.fills_paper ?? 0) > 0 && (status.fills_live ?? 0) === 0 ? (
+        <div className="anim-rise rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-2.5 text-sm text-[var(--muted)]">
+          Ledger still has {status.fills_paper} paper fills — no live CLOB orders
+          yet (attempts {status.live_order_attempts ?? 0}).
+        </div>
+      ) : null}
       {error && (
         <div className="anim-rise rounded-2xl border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-3.5 py-2.5 text-sm text-[var(--danger)]">
           {error}
@@ -194,8 +227,8 @@ export default function OpsDashboard() {
       >
         <div className="grid grid-cols-4 gap-2">
           {[
-            ["Open", status?.open_no_count ?? "—"],
-            ["W/L", `${status?.wins ?? 0}/${status?.losses ?? 0}`],
+            ["Open", status?.open_no_count ?? positions.length ?? "—"],
+            ["W/L", `${wins}/${losses}`],
             ["Hit", hitRate != null ? `${hitRate}%` : "—"],
             [
               "METAR",
@@ -214,6 +247,56 @@ export default function OpsDashboard() {
               <div className="mono mt-1 text-[15px] font-semibold">{value}</div>
             </div>
           ))}
+        </div>
+        <div className="mt-3 flex flex-col gap-2">
+          {positions.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-3 text-center text-xs text-[var(--muted)]">
+              No open trades
+            </div>
+          ) : (
+            positions.map((p) => {
+              const href = polymarketUrl({
+                city: p.city,
+                kind: p.kind,
+                end_date: p.end_date,
+                url: p.polymarket_url,
+              });
+              const title = (p.question || p.city || p.location_id || "").replace(
+                /_/g,
+                " ",
+              );
+              return (
+                <div
+                  key={p.market_id}
+                  className="rounded-xl bg-[var(--bg)]/80 px-3 py-2.5"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold capitalize tracking-tight">
+                        {(p.city || p.location_id || "").replace(/_/g, " ")}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-[var(--muted)]">
+                        {title}
+                      </div>
+                      <div className="mt-1">
+                        <MarketLink href={href} />
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div
+                        className={`mono text-sm font-medium ${(p.unrealized_pnl ?? 0) >= 0 ? "text-[var(--ok)]" : "text-[var(--danger)]"}`}
+                      >
+                        {money(p.unrealized_pnl)}
+                      </div>
+                      <div className="mono mt-0.5 text-[11px] text-[var(--muted)]">
+                        {p.entry_price.toFixed(3)} · ${p.size_usd.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -259,8 +342,8 @@ export default function OpsDashboard() {
             </button>
           </div>
           <span className="mt-1.5 block text-[11px] text-[var(--muted)]">
-            Tickets scale with budget · max {Math.round(deployFrac * 100)}% open
-            at once
+            Stake cap (not live wallet). Tickets scale with min(cap, wallet) · max{" "}
+            {Math.round(deployFrac * 100)}% open at once
           </span>
         </label>
 
@@ -330,7 +413,7 @@ export default function OpsDashboard() {
           [
             ["cities", "Cities", cities.length],
             ["positions", "Pos", positions.length],
-            ["fills", "Fills", fills.length],
+            ["fills", "Fills", visibleFills.length],
             ["skips", "Skips", skips.length],
           ] as const
         ).map(([id, label, count]) => (
@@ -501,12 +584,12 @@ export default function OpsDashboard() {
 
       {tab === "fills" && (
         <section className="flex flex-col gap-2.5">
-          {fills.length === 0 ? (
+          {visibleFills.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--line)] px-3 py-6 text-center text-sm text-[var(--muted)]">
               No fills yet
             </div>
           ) : (
-            fills.slice(0, 50).map((f) => {
+            visibleFills.slice(0, 50).map((f) => {
               const href = polymarketUrl({
                 city: f.city || f.location_id,
                 url: f.polymarket_url,

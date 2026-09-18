@@ -136,10 +136,16 @@ def create_app(settings: Settings | None = None, start_loop: bool = True) -> Fas
             "ok": True,
             "mode": status.get("mode"),
             "armed": status.get("armed"),
+            "live_clob": bool(status.get("live_clob")),
+            "poly_creds": require_engine().settings.has_poly_creds,
+            "mock_markets": bool(status.get("mock_markets")),
             "redis": ping.get("redis"),
             "last_metar_ts": status.get("last_metar_ts"),
             "last_book_ts": status.get("last_book_ts"),
             "markets": status.get("markets_tracked"),
+            "budget_usd": status.get("budget_usd"),
+            "wallet_usd": status.get("wallet_usd"),
+            "gains_usd": status.get("gains_usd"),
             "ui": _resolve_ui_dir() is not None,
         }
 

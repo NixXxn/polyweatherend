@@ -1,21 +1,16 @@
-# WeatherBuyEnd — Coolify single-container image
-# Multi-stage: Next.js static ops UI + Python exec/API on one PORT.
-# Coolify Dockerfile mode: / serves the dashboard; /api/* and /health are the API.
+# WeatherBuyEnd Live — Coolify single-container
+# Polymarket CLOB taker BUY NO (POLY_* secrets via Coolify env — never bake into image)
 
-# ---- UI build ----
 FROM node:22-alpine AS ui
 WORKDIR /ui
 COPY dashboard/package.json dashboard/package-lock.json ./
 RUN npm ci
 COPY dashboard/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
-# Same-origin API in the browser (empty NEXT_PUBLIC_API_URL → relative /api/...)
 ENV NEXT_PUBLIC_API_URL=
 RUN npm run build
 
-# ---- Runtime ----
 FROM python:3.12-slim
-
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
@@ -34,10 +29,11 @@ ENV WEATHERBUY_UI_DIR=/app/ui
 ENV API_HOST=0.0.0.0
 ENV API_PORT=3847
 ENV PORT=3847
-ENV TRADING_MODE=paper
-ENV LIVE_TRADING=false
-ENV MOCK_MARKETS=true
-ENV CITY_ROLES=paper,strict
+ENV TRADING_MODE=live
+ENV LIVE_TRADING=true
+ENV MOCK_MARKETS=false
+ENV KILL_SWITCH=true
+ENV CITY_ROLES=paper,strict,metar
 
 RUN mkdir -p /app/data/ledger /app/logs
 

@@ -7,3 +7,5 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 python-dateutil==2.9.0.post0
 orjson==3.11.2
+py-clob-client-v2==1.1.0
+web3>=6.0.0,<8

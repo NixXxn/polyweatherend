@@ -4,9 +4,20 @@ export type Snapshot = {
     killed?: boolean;
     kill_reason?: string;
     mode?: string;
+    live_clob?: boolean;
     mock_markets?: boolean;
-    open_no_count?: number;
     budget_usd?: number;
+    effective_budget_usd?: number;
+    wallet_usd?: number | null;
+    wallet_allowance_usd?: number | null;
+    wallet_error?: string | null;
+    poly_sig_type?: number;
+    poly_funder_set?: boolean;
+    fills_paper?: number;
+    fills_live?: number;
+    live_order_attempts?: number;
+    live_order_ok?: number;
+    open_no_count?: number;
     gains_usd?: number;
     pnl_today?: number;
     realized_pnl?: number;
@@ -128,6 +139,7 @@ export type Settlement = {
   polymarket_url?: string;
   reason?: string;
   question?: string;
+  mode?: string;
 };
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");

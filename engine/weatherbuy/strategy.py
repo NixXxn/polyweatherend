@@ -115,9 +115,12 @@ def budget_ticket_usd(
     # Soft-scale with remaining deployable capacity (full size when book empty)
     rem_frac = deployable / max(max_open, 1e-9)
     size = scaled * max(0.35, min(1.0, rem_frac))
-    size = min(size, deployable, float(max_per_fill_usd), budget * 0.05)
-    if size < min_ticket_usd:
-        return 0.0, "ticket_too_small"
+    size = min(size, deployable, float(max_per_fill_usd), max(budget * 0.05, min_ticket_usd))
+    if size + 1e-9 < min_ticket_usd:
+        if deployable + 1e-9 >= min_ticket_usd:
+            size = min_ticket_usd
+        else:
+            return 0.0, "ticket_too_small"
     return round(size, 2), "ok"
 
 

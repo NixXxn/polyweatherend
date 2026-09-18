@@ -1,12 +1,15 @@
-"""Market discovery + book quotes (PMXT catalog or mock)."""
+"""Market discovery + book quotes (Gamma catalog + Polymarket CLOB)."""
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import logging
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -18,12 +21,22 @@ from .strategy import polymarket_event_url
 
 logger = logging.getLogger(__name__)
 
+# Hard cap so a bad Gamma parse cannot stall the live loop on tens of thousands of books.
+MAX_LIVE_MARKETS = 1200
+QUOTE_WORKERS = 12
+
 BUCKET_RE = re.compile(
     r"(?:highest|lowest|high|low|max|min).*?(?:temp|temperature).*?"
     r"(?:between\s+)?(-?\d+(?:\.\d+)?)\s*[°º]?\s*[CF]?\s*(?:-|to|–|—)\s*(-?\d+(?:\.\d+)?)",
     re.I,
 )
 CITY_SLUG_RE = re.compile(r"([a-z0-9-]+)", re.I)
+EVENT_DATE_RE = re.compile(
+    r"on[- ](?P<month>[a-z]+)[- ](?P<day>\d{1,2})(?:st|nd|rd|th)?[- ,]*(?P<year>\d{4})",
+    re.I,
+)
+MONTH_NUM = {calendar.month_name[i].lower(): i for i in range(1, 13)}
+MONTH_NUM.update({calendar.month_abbr[i].lower(): i for i in range(1, 13)})
 
 
 @dataclass
@@ -42,6 +55,8 @@ class WeatherMarket:
     temperature_unit: str = "fahrenheit"
     event_slug: str | None = None
     polymarket_url: str | None = None
+    neg_risk: bool = True
+    tick_size: str = "0.01"
 
 
 @dataclass
@@ -75,6 +90,37 @@ class CityStatus:
     reason: str = ""
 
 
+def parse_event_date(*texts: str | None) -> date | None:
+    """Parse 'on September 17, 2026' / slug 'on-september-17-2026' from Gamma fields."""
+    blob = " ".join(str(t) for t in texts if t)
+    if not blob:
+        return None
+    m = EVENT_DATE_RE.search(blob.replace("_", "-"))
+    if not m:
+        return None
+    month = MONTH_NUM.get(m.group("month").lower())
+    if not month:
+        return None
+    try:
+        return date(int(m.group("year")), month, int(m.group("day")))
+    except ValueError:
+        return None
+
+
+def is_temperature_question(question: str) -> bool:
+    q = question.lower()
+    return "temperature" in q or "°" in question
+
+
+def city_local_trade_dates(tz_name: str, now: datetime | None = None) -> set[date]:
+    now = now or datetime.now(timezone.utc)
+    try:
+        local = now.astimezone(ZoneInfo(tz_name)).date()
+    except Exception:
+        local = now.date()
+    return {local - timedelta(days=1), local, local + timedelta(days=1)}
+
+
 def _parse_bucket(question: str) -> tuple[str, float | None, float | None]:
     q = question.lower()
     kind = "highest" if ("highest" in q or "high temperature" in q or "max temp" in q) else "lowest"
@@ -103,101 +149,290 @@ class MarketService:
         self._client.close()
 
     def refresh_markets(self, force_new: bool = False) -> list[WeatherMarket]:
-        if self.settings.mock_markets or not self.settings.pmxt_api_key:
+        if self.settings.mock_markets:
             if force_new:
                 self._epoch += 1
             self.markets = self._mock_markets()
             return self.markets
+        # Live path: Gamma discovery + CLOB books/orders only
         try:
-            self.markets = self._fetch_pmxt_weather()
-            if not self.markets:
-                logger.warning("PMXT returned no weather markets; falling back to mock")
-                self.markets = self._mock_markets()
+            self.markets = self._fetch_gamma_weather()
+            by_city: dict[str, list[WeatherMarket]] = {}
+            for m in self.markets:
+                by_city.setdefault(m.location_id, []).append(m)
+            capped: list[WeatherMarket] = []
+            per_city = 24
+            for rows in by_city.values():
+                capped.extend(rows[:per_city])
+            if len(capped) != len(self.markets):
+                logger.info(
+                    "Gamma per-city cap %d → %d markets (%d cities)",
+                    len(self.markets),
+                    len(capped),
+                    len(by_city),
+                )
+            self.markets = capped
+            if len(self.markets) > MAX_LIVE_MARKETS:
+                logger.error(
+                    "Gamma matched %d markets — capping to %d",
+                    len(self.markets),
+                    MAX_LIVE_MARKETS,
+                )
+                self.markets = self.markets[:MAX_LIVE_MARKETS]
+            if self.markets:
+                return self.markets
+            logger.warning("Gamma returned no matched weather markets")
         except Exception as e:
-            logger.exception("PMXT catalog failed: %s", e)
-            self.markets = self._mock_markets()
+            logger.exception("Gamma catalog failed: %s", e)
+        logger.warning(
+            "No Gamma weather markets found. "
+            "Check POLY_GAMMA_URL / city slugs, or set MOCK_MARKETS=true for local paper."
+        )
+        self.markets = []
         return self.markets
 
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.settings.pmxt_api_key}"}
-
-    def _fetch_pmxt_weather(self) -> list[WeatherMarket]:
-        # Hosted catalog — keep query broad; filter client-side
-        url = f"{self.settings.pmxt_catalog_url.rstrip('/')}/v0/markets"
-        params = {"limit": 200, "q": "temperature"}
-        r = self._client.get(url, headers=self._headers(), params=params)
-        if r.status_code >= 400:
-            logger.warning("PMXT markets HTTP %s: %s", r.status_code, r.text[:200])
-            return []
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("markets") or data.get("data") or []
+    def _fetch_gamma_weather(self) -> list[WeatherMarket]:
+        """Discover today's temperature bucket markets via Polymarket Gamma API."""
+        base = self.settings.poly_gamma_url.rstrip("/")
         out: list[WeatherMarket] = []
-        for item in items:
-            q = str(item.get("question") or item.get("title") or "")
-            if "temp" not in q.lower() and "°" not in q:
-                continue
-            kind, lo, hi = _parse_bucket(q)
-            slug = self._match_city_slug(q, item)
-            if not slug or slug not in self.by_slug:
-                continue
-            city = self.by_slug[slug]
-            tokens = item.get("tokens") or item.get("outcomes") or []
-            yes_id, no_id = self._token_ids(item, tokens)
-            mid = str(item.get("id") or item.get("condition_id") or item.get("market_id"))
-            end_date = item.get("end_date") or item.get("endDate")
-            event_slug = item.get("event_slug") or item.get("slug")
-            pm_url = polymarket_event_url(
+        seen: set[str] = set()
+        skipped = {"not_temp": 0, "city": 0, "date": 0, "closed": 0, "tokens": 0}
+
+        def add_item(item: dict, city: dict, slug: str, event_slug: str | None = None) -> None:
+            m = self._gamma_to_market(item, city, slug, event_slug=event_slug, skipped=skipped)
+            if m and m.market_id not in seen:
+                seen.add(m.market_id)
+                out.append(m)
+
+        for slug, city in self.by_slug.items():
+            # Direct event slug for today (and tomorrow) — primary live path
+            try:
+                local = datetime.now(ZoneInfo(city["timezone"])).date()
+                days = [local]
+                for day in days:
+                    month = day.strftime("%B").lower()
+                    for kind in ("highest", "lowest"):
+                        event_slug = f"{kind}-temperature-in-{slug}-on-{month}-{day.day}-{day.year}"
+                        r = self._client.get(
+                            f"{base}/events", params={"slug": event_slug}, timeout=15.0
+                        )
+                        if r.status_code >= 400:
+                            continue
+                        data = r.json()
+                        events = data if isinstance(data, list) else [data]
+                        for ev in events:
+                            if not isinstance(ev, dict):
+                                continue
+                            nested = ev.get("markets") or []
+                            if nested:
+                                for item in nested:
+                                    if isinstance(item, dict):
+                                        add_item(item, city, slug, event_slug=event_slug)
+                            else:
+                                add_item(ev, city, slug, event_slug=event_slug)
+            except Exception as e:
+                logger.debug("gamma event slug fail %s: %s", slug, e)
+
+            # Narrow search fallback — still city+date gated in _gamma_to_market
+            queries = [
+                f"highest temperature in {slug.replace('-', ' ')}",
+                f"lowest temperature in {slug.replace('-', ' ')}",
+            ]
+            for q in queries:
+                try:
+                    r = self._client.get(
+                        f"{base}/public-search",
+                        params={"q": q, "limit_per_type": 8},
+                        timeout=20.0,
+                    )
+                    if r.status_code >= 400:
+                        continue
+                    data = r.json()
+                    items = self._gamma_items(data)
+                    for item in items:
+                        add_item(item, city, slug)
+                except Exception as e:
+                    logger.debug("gamma query fail %s: %s", q, e)
+
+        logger.info(
+            "Gamma weather markets matched: %d skipped=%s cities=%d",
+            len(out),
+            skipped,
+            len(self.by_slug),
+        )
+        return out
+
+    def _gamma_items(self, data: Any) -> list[dict]:
+        if isinstance(data, list):
+            return [x for x in data if isinstance(x, dict)]
+        if not isinstance(data, dict):
+            return []
+        # Prefer events (public-search) over a top-level markets dump.
+        for key in ("events", "markets", "data"):
+            raw = data.get(key)
+            if isinstance(raw, list):
+                out: list[dict] = []
+                for row in raw:
+                    if not isinstance(row, dict):
+                        continue
+                    nested = [m for m in (row.get("markets") or []) if isinstance(m, dict)]
+                    if nested:
+                        parent_slug = row.get("slug") or row.get("ticker")
+                        for m in nested:
+                            if parent_slug and not m.get("eventSlug") and not m.get("event_slug"):
+                                m = {**m, "eventSlug": parent_slug}
+                            out.append(m)
+                    elif "question" in row or "clobTokenIds" in row or "tokens" in row:
+                        out.append(row)
+                return out
+        return []
+
+    def _gamma_to_market(
+        self,
+        item: dict,
+        city: dict,
+        slug: str,
+        event_slug: str | None = None,
+        skipped: dict[str, int] | None = None,
+    ) -> WeatherMarket | None:
+        def bump(reason: str) -> None:
+            if skipped is not None:
+                skipped[reason] = skipped.get(reason, 0) + 1
+
+        if item.get("closed") is True or item.get("active") is False:
+            bump("closed")
+            return None
+        q = str(item.get("question") or item.get("title") or "")
+        if not is_temperature_question(q):
+            bump("not_temp")
+            return None
+        matched = self._match_city_slug(q, item)
+        if matched is None and event_slug and slug.replace("_", "-") in str(event_slug).replace("_", "-"):
+            matched = slug
+        if matched is None:
+            bump("city")
+            return None
+        if matched != slug:
+            if matched not in self.by_slug:
+                bump("city")
+                return None
+            city = self.by_slug[matched]
+            slug = matched
+        ev = event_slug or item.get("slug") or item.get("eventSlug") or item.get("event_slug")
+        ev_date = parse_event_date(q, str(ev) if ev else None, item.get("endDate"), item.get("end_date"))
+        allowed = city_local_trade_dates(city.get("timezone") or "UTC")
+        if ev_date is None or ev_date not in allowed:
+            bump("date")
+            return None
+        kind, lo, hi = _parse_bucket(q)
+        yes_id, no_id = self._gamma_token_ids(item)
+        if not yes_id or not no_id or yes_id.startswith("None"):
+            bump("tokens")
+            return None
+        mid = str(item.get("conditionId") or item.get("condition_id") or item.get("id") or "")
+        if not mid:
+            return None
+        end_date = item.get("endDate") or item.get("end_date")
+        tick = str(item.get("minimum_tick_size") or item.get("orderPriceMinTickSize") or "0.01")
+        neg = item.get("negRisk")
+        if neg is None:
+            neg = item.get("neg_risk")
+        if neg is None:
+            neg = True
+        return WeatherMarket(
+            market_id=mid,
+            question=q,
+            city_slug=slug,
+            location_id=city["location_id"],
+            kind=kind,
+            lo=lo,
+            hi=hi,
+            yes_token_id=yes_id,
+            no_token_id=no_id,
+            end_date=str(end_date)[:10] if end_date else None,
+            timezone=city["timezone"],
+            temperature_unit=city.get("temperature_unit", "fahrenheit"),
+            event_slug=str(ev) if ev else None,
+            polymarket_url=polymarket_event_url(
                 city_slug=slug,
                 kind=kind,
-                end_date=str(end_date) if end_date else None,
-                event_slug=str(event_slug) if event_slug else None,
+                end_date=str(end_date)[:10] if end_date else None,
+                event_slug=str(ev) if ev else None,
                 market_id=mid,
-            )
-            out.append(
-                WeatherMarket(
-                    market_id=mid,
-                    question=q,
-                    city_slug=slug,
-                    location_id=city["location_id"],
-                    kind=kind,
-                    lo=lo,
-                    hi=hi,
-                    yes_token_id=yes_id,
-                    no_token_id=no_id,
-                    end_date=end_date,
-                    timezone=city["timezone"],
-                    temperature_unit=city.get("temperature_unit", "fahrenheit"),
-                    event_slug=str(event_slug) if event_slug else None,
-                    polymarket_url=pm_url,
-                )
-            )
-        return out
+            ),
+            neg_risk=bool(neg),
+            tick_size=tick,
+        )
+
+    def _gamma_token_ids(self, item: dict) -> tuple[str, str]:
+        yes_id, no_id = "", ""
+        # clobTokenIds often JSON string "[yes, no]"
+        raw = item.get("clobTokenIds") or item.get("clob_token_ids")
+        if isinstance(raw, str):
+            try:
+                import json
+
+                arr = json.loads(raw)
+                if isinstance(arr, list) and len(arr) >= 2:
+                    yes_id, no_id = str(arr[0]), str(arr[1])
+            except Exception:
+                pass
+        elif isinstance(raw, list) and len(raw) >= 2:
+            yes_id, no_id = str(raw[0]), str(raw[1])
+        tokens = item.get("tokens") or []
+        if isinstance(tokens, list):
+            for t in tokens:
+                if not isinstance(t, dict):
+                    continue
+                name = str(t.get("outcome") or t.get("name") or "").lower()
+                tid = str(t.get("token_id") or t.get("tokenId") or "")
+                if name in {"yes", "y"} and tid:
+                    yes_id = tid
+                if name in {"no", "n"} and tid:
+                    no_id = tid
+        outcomes = item.get("outcomes")
+        if (not yes_id or not no_id) and isinstance(outcomes, str):
+            try:
+                import json
+
+                names = json.loads(outcomes)
+                ids_raw = item.get("clobTokenIds")
+                ids = json.loads(ids_raw) if isinstance(ids_raw, str) else ids_raw
+                if isinstance(names, list) and isinstance(ids, list) and len(names) == len(ids):
+                    for name, tid in zip(names, ids):
+                        n = str(name).lower()
+                        if n == "yes":
+                            yes_id = str(tid)
+                        if n == "no":
+                            no_id = str(tid)
+            except Exception:
+                pass
+        return yes_id, no_id
 
     def _match_city_slug(self, question: str, item: dict) -> str | None:
         hay = " ".join(
             [
                 question.lower(),
-                str(item.get("slug") or ""),
-                str(item.get("event_slug") or ""),
+                str(item.get("slug") or "").lower(),
+                str(item.get("event_slug") or "").lower(),
+                str(item.get("eventSlug") or "").lower(),
             ]
         )
-        for slug in self.by_slug:
-            if slug.replace("-", " ") in hay or slug in hay:
+        hay_norm = re.sub(r"[^a-z0-9]+", " ", hay)
+        aliases = {
+            "nyc": ("new york city", "new york"),
+        }
+        # Longest slug first so 'new-york-city' wins over 'york'
+        for slug in sorted(self.by_slug, key=len, reverse=True):
+            needle = slug.replace("-", " ")
+            if re.search(rf"(?:^|[\s\-_/,]){re.escape(slug)}(?:$|[\s\-_/,])", hay):
                 return slug
+            if re.search(rf"(?:^|\s){re.escape(needle)}(?:$|\s)", hay_norm):
+                return slug
+            for alias in aliases.get(slug, ()):
+                if re.search(rf"(?:^|\s){re.escape(alias)}(?:$|\s)", hay_norm):
+                    return slug
         return None
-
-    def _token_ids(self, item: dict, tokens: Any) -> tuple[str, str]:
-        yes_id = str(item.get("yes_token_id") or item.get("token1") or f"{item.get('id')}-YES")
-        no_id = str(item.get("no_token_id") or item.get("token2") or f"{item.get('id')}-NO")
-        if isinstance(tokens, list) and len(tokens) >= 2:
-            for t in tokens:
-                name = str(t.get("outcome") or t.get("name") or "").lower()
-                tid = str(t.get("token_id") or t.get("id") or "")
-                if name in {"yes", "y"}:
-                    yes_id = tid or yes_id
-                if name in {"no", "n"}:
-                    no_id = tid or no_id
-        return yes_id, no_id
 
     def _mock_markets(self) -> list[WeatherMarket]:
         """Synthetic buckets near each city's timezone for paper/shadow testing."""
@@ -236,28 +471,90 @@ class MarketService:
 
     def refresh_quotes(self, day_states: dict[str, DayState]) -> dict[str, BookQuote]:
         quotes: dict[str, BookQuote] = {}
-        for m in self.markets:
-            if self.settings.mock_markets or not self.settings.pmxt_api_key:
+        if self.settings.mock_markets:
+            for m in self.markets:
                 quotes[m.market_id] = self._mock_quote(m, day_states.get(m.location_id))
-            else:
-                try:
-                    quotes[m.market_id] = self._fetch_quote(m)
-                except Exception as e:
-                    logger.debug("quote fail %s: %s", m.market_id, e)
-                    quotes[m.market_id] = self._mock_quote(m, day_states.get(m.location_id))
+            self.quotes = quotes
+            return quotes
+
+        host = self.settings.poly_clob_host.rstrip("/")
+        fails = 0
+        t0 = datetime.now(timezone.utc)
+        local = threading.local()
+
+        def client() -> httpx.Client:
+            c = getattr(local, "http", None)
+            if c is None:
+                local.http = httpx.Client(timeout=8.0, follow_redirects=True)
+                c = local.http
+            return c
+
+        def one(m: WeatherMarket) -> tuple[str, BookQuote, bool]:
+            try:
+                return m.market_id, self._fetch_clob_quote(m, http=client()), False
+            except Exception as e:
+                logger.debug("CLOB book fail %s @ %s: %s", m.market_id[:18], host, e)
+                empty = BookQuote(
+                    market_id=m.market_id,
+                    yes_bid=None,
+                    yes_ask=None,
+                    no_bid=None,
+                    no_ask=None,
+                    no_mid=None,
+                    depth_no_usd=0.0,
+                    ts=datetime.now(timezone.utc).isoformat(),
+                )
+                return m.market_id, empty, True
+
+        workers = min(QUOTE_WORKERS, max(1, len(self.markets)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(one, m) for m in self.markets]
+            for fut in as_completed(futs):
+                mid, quote, failed = fut.result()
+                quotes[mid] = quote
+                if failed:
+                    fails += 1
+
+        elapsed_ms = (datetime.now(timezone.utc) - t0).total_seconds() * 1000
+        priced = sum(1 for q in quotes.values() if q.no_ask is not None or q.no_mid is not None)
+        logger.info(
+            "CLOB quotes markets=%d priced=%d fail=%d elapsed_ms=%.0f",
+            len(self.markets),
+            priced,
+            fails,
+            elapsed_ms,
+        )
         self.quotes = quotes
         return quotes
 
-    def _fetch_quote(self, m: WeatherMarket) -> BookQuote:
-        url = f"{self.settings.pmxt_catalog_url.rstrip('/')}/v0/markets/{m.market_id}/book"
-        r = self._client.get(url, headers=self._headers())
-        if r.status_code >= 400:
-            raise RuntimeError(f"book {r.status_code}")
-        data = r.json()
-        yes_ask = _best(data, "yes", "ask")
-        yes_bid = _best(data, "yes", "bid")
-        no_ask = _best(data, "no", "ask")
-        no_bid = _best(data, "no", "bid")
+    def _fetch_clob_quote(self, m: WeatherMarket, http: httpx.Client | None = None) -> BookQuote:
+        """Public CLOB book for NO token (and YES for complement) at clob.polymarket.com."""
+        host = self.settings.poly_clob_host.rstrip("/")
+        http = http or self._client
+        no_ask = no_bid = yes_ask = yes_bid = None
+        depth = 0.0
+        sides = (("no", m.no_token_id),)
+        if not m.no_token_id:
+            sides = (("yes", m.yes_token_id),)
+        for side_name, tid in sides:
+            if not tid or str(tid).startswith(("yes-", "no-")):
+                continue
+            r = http.get(f"{host}/book", params={"token_id": tid}, timeout=8.0)
+            if r.status_code >= 400:
+                raise RuntimeError(f"CLOB book HTTP {r.status_code} for {tid[:16]}…")
+            book = r.json()
+            asks = book.get("asks") or []
+            bids = book.get("bids") or []
+            best_ask = min(float(a["price"]) for a in asks) if asks else None
+            best_bid = max(float(b["price"]) for b in bids) if bids else None
+            if side_name == "no":
+                no_ask, no_bid = best_ask, best_bid
+                if asks:
+                    depth = sum(
+                        float(a.get("size") or 0) * float(a.get("price") or 0) for a in asks[:5]
+                    )
+            else:
+                yes_ask, yes_bid = best_ask, best_bid
         if no_ask is None and yes_bid is not None:
             no_ask = max(0.01, min(0.99, 1.0 - float(yes_bid)))
         if no_bid is None and yes_ask is not None:
@@ -274,7 +571,7 @@ class MarketService:
             no_bid=no_bid,
             no_ask=no_ask,
             no_mid=mid,
-            depth_no_usd=float(data.get("depth_no_usd") or 200),
+            depth_no_usd=float(depth or 50),
             ts=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -304,19 +601,3 @@ class MarketService:
             depth_no_usd=150.0,
             ts=datetime.now(timezone.utc).isoformat(),
         )
-
-
-def _best(data: dict, side: str, book_side: str) -> float | None:
-    key = f"{side}_{book_side}"
-    if key in data and data[key] is not None:
-        return float(data[key])
-    books = data.get("books") or data.get("orderbook") or {}
-    side_book = books.get(side) or {}
-    levels = side_book.get(f"{book_side}s") or side_book.get(book_side) or []
-    if levels:
-        lvl = levels[0]
-        if isinstance(lvl, dict):
-            return float(lvl.get("price") or lvl.get("p"))
-        if isinstance(lvl, (list, tuple)) and lvl:
-            return float(lvl[0])
-    return None
