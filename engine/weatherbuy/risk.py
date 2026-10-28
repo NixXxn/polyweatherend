@@ -38,6 +38,7 @@ class RiskGate:
         self.max_daily_loss_usd = float(raw.get("max_daily_loss_usd", 100))
         self.max_metar_age_minutes = float(raw.get("max_metar_age_minutes", 45))
         self.max_venue_error_rate = float(raw.get("max_venue_error_rate", 0.25))
+        self.min_venue_attempts = int(raw.get("min_venue_attempts", 8))
         self.max_deploy_frac = float(raw.get("max_deploy_frac", 0.75))
         self.state = RiskState()
 
@@ -52,6 +53,7 @@ class RiskGate:
         already_open: bool,
         open_notional: float = 0.0,
         budget_usd: float | None = None,
+        venue_attempts: int = 0,
     ) -> tuple[bool, str]:
         self.state.reset_if_new_day()
         if self.state.killed:
@@ -79,7 +81,12 @@ class RiskGate:
             return False, "daily_loss"
         if metar_age_minutes is None or metar_age_minutes > self.max_metar_age_minutes:
             return False, "metar_stale"
-        if venue_error_rate > self.max_venue_error_rate:
+        # FOK misses / thin books are not outages. Only trip after a real sample
+        # of hard CLOB failures (auth, 5xx, exceptions).
+        if (
+            int(venue_attempts) >= self.min_venue_attempts
+            and venue_error_rate > self.max_venue_error_rate
+        ):
             self.kill("venue_error_rate")
             return False, "venue_error_rate"
         return True, "ok"

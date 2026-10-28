@@ -8,7 +8,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from .config import Settings, load_cities, load_strategy
@@ -65,35 +65,176 @@ class ExecEngine:
         self._wins = 0
         self._losses = 0
         self._use_mock_metar = bool(paper.get("mock_metar_on_failure", True))
-        self._budget_usd = self._resolve_budget()
+        self._starting_budget_usd, self._budget_pnl_basis = self._resolve_starting_budget()
+        self._budget_usd = self._starting_budget_usd
+        self._realized_pnl_total = 0.0
         self._max_deploy_frac = float((self.strategy.get("risk") or {}).get("max_deploy_frac", 0.75))
+        self._wallet_usd: float | None = None
+        self._wallet_allowance_usd: float | None = None
+        self._wallet_error: str | None = None
+        self._wallet_ts: str | None = None
+        self._last_wallet_fetch = 0.0
+        self._live_order_attempts = 0
+        self._live_order_ok = 0
+        self._restore_open_from_store()
+        # Publish restored W/L / gains *before* Gamma/CLOB I/O so the dashboard
+        # never serves a 1–2s stale snapshot that then zeros out.
+        self._publish()
 
-    def _resolve_budget(self) -> float:
-        """Persisted controls → env BUDGET_USD → strategy bankroll."""
+    def _resolve_starting_budget(self) -> tuple[float, float]:
+        """User-set starting bankroll + PnL basis so restarts don't double-count.
+
+        Paper cash = starting + (ledger realized − basis). `budget_usd` in
+        controls is the *compounded* number we publish, so it must not be
+        reused as starting capital once `starting_budget_usd` exists.
+        """
         snap = self.store.snapshot()
         controls = snap.get("controls") or {}
-        for key in ("budget_usd", "bankroll_usd"):
-            if controls.get(key) is not None:
+
+        def _pos(val: Any) -> float | None:
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                return None
+            return v if v > 0 else None
+
+        starting = _pos(controls.get("starting_budget_usd"))
+        if starting is not None:
+            basis = 0.0
+            if controls.get("budget_pnl_basis") is not None:
                 try:
-                    v = float(controls[key])
-                    if v > 0:
-                        return v
+                    basis = float(controls["budget_pnl_basis"])
+                except (TypeError, ValueError):
+                    basis = 0.0
+            return starting, basis
+
+        if self.settings.budget_usd is not None:
+            v = _pos(self.settings.budget_usd)
+            if v is not None:
+                return v, 0.0
+        v = _pos(self.strategy.get("bankroll_usd") or self.strategy.get("budget_usd"))
+        if v is not None:
+            return v, 0.0
+        for key in ("budget_usd", "bankroll_usd"):
+            v = _pos(controls.get(key))
+            if v is not None:
+                return v, 0.0
+        return 500.0, 0.0
+
+    def _cash_budget(self) -> float:
+        """Paper bankroll compounds wins/losses; live stake cap stays user-set."""
+        if self.settings.is_live:
+            return self._budget_usd
+        return max(10.0, round(self._starting_budget_usd + self._realized_pnl_total - self._budget_pnl_basis, 2))
+
+    def _restore_open_from_store(self) -> None:
+        """Keep opens / W/L / arm state across process restarts so the dashboard doesn't flash zeros."""
+        snap = self.store.snapshot()
+        want_mode = "live" if self.settings.is_live else "paper"
+        today = date.today().isoformat()
+        restored = 0
+        for pos in snap.get("positions") or []:
+            mid = str(pos.get("market_id") or "")
+            if not mid:
+                continue
+            if str(pos.get("status") or "open") != "open":
+                continue
+            mode = str(pos.get("mode") or want_mode)
+            self._open[mid] = dict(pos)
+            loc = pos.get("location_id")
+            if loc:
+                self.risk.state.open_locations.add(str(loc))
+            opened = str(pos.get("opened_at") or pos.get("ts") or "")
+            if mode == want_mode and opened.startswith(today):
+                self.risk.state.markets_today.add(mid)
+                try:
+                    self.risk.state.daily_notional += float(pos.get("size_usd") or 0)
                 except (TypeError, ValueError):
                     pass
-        if self.settings.budget_usd is not None:
+            restored += 1
+
+        stats = self.store.settlement_stats(mode=want_mode)
+        if int(stats.get("count") or 0) == 0:
+            stats = self.store.settlement_stats()
+        prev = snap.get("status") or {}
+        pnl = float(stats.get("pnl") or 0.0)
+        wins = int(stats.get("wins") or 0)
+        losses = int(stats.get("losses") or 0)
+        if wins + losses == 0:
+            wins = int(prev.get("wins") or 0)
+            losses = int(prev.get("losses") or 0)
+        if pnl == 0.0:
             try:
-                v = float(self.settings.budget_usd)
-                if v > 0:
-                    return v
+                pnl = float(prev.get("gains_usd") or prev.get("realized_pnl") or 0.0)
+            except (TypeError, ValueError):
+                pnl = 0.0
+        self._realized_pnl_total = pnl
+        self._wins = wins
+        self._losses = losses
+        today_stats = self.store.settlement_stats(mode=want_mode, day=today)
+        if int(today_stats.get("count") or 0) == 0:
+            today_stats = self.store.settlement_stats(day=today)
+        self.risk.state.daily_realized_pnl = float(today_stats.get("pnl") or 0.0)
+        self.risk.state.day = today
+
+        controls = snap.get("controls") or {}
+        if "killed" in controls:
+            if controls.get("killed"):
+                self.risk.kill(str(controls.get("kill_reason") or "persisted"))
+            else:
+                self.risk.arm()
+        if "sleeve_no_eliminated" in controls:
+            self.risk.state.sleeve_no_eliminated = bool(controls["sleeve_no_eliminated"])
+        if controls.get("stake_multiplier") is not None:
+            try:
+                self.risk.state.stake_multiplier = float(controls["stake_multiplier"])
             except (TypeError, ValueError):
                 pass
-        return float(self.strategy.get("bankroll_usd") or self.strategy.get("budget_usd") or 500.0)
+
+        fills = snap.get("fills") or []
+        live_like = [f for f in fills if str(f.get("mode") or "") == want_mode]
+        if self.settings.is_live:
+            self._live_order_attempts = len(live_like)
+            self._live_order_ok = sum(
+                1 for f in live_like if str(f.get("status") or "") in {"filled", "submitted"}
+            )
+        logger.info(
+            "Restored ledger mode=%s opens=%d wins=%d losses=%d pnl=%.2f armed=%s",
+            want_mode,
+            restored,
+            self._wins,
+            self._losses,
+            self._realized_pnl_total,
+            (not self.risk.state.killed) and self.risk.state.sleeve_no_eliminated,
+        )
+
+    def _effective_budget(self) -> float:
+        """Stake cap is paper cash (compounded) or live min(cap, wallet)."""
+        cash = self._cash_budget()
+        if (
+            self.settings.is_live
+            and self._wallet_usd is not None
+            and self._wallet_usd > 0
+        ):
+            return min(cash, self._wallet_usd)
+        return cash
+
+    def _refresh_wallet(self, force: bool = False) -> None:
+        now = time.time()
+        if not force and now - self._last_wallet_fetch < 30:
+            return
+        self._last_wallet_fetch = now
+        info = self.venue.get_collateral()
+        self._wallet_usd = info.get("wallet_usd")
+        self._wallet_allowance_usd = info.get("allowance_usd")
+        self._wallet_error = info.get("error")
+        self._wallet_ts = datetime.now(timezone.utc).isoformat()
 
     def _open_notional(self) -> float:
         return sum(float(p.get("size_usd") or 0) for p in self._open.values())
 
     def _deployable(self) -> float:
-        max_open = self._budget_usd * self._max_deploy_frac
+        max_open = self._effective_budget() * self._max_deploy_frac
         return max(0.0, max_open - self._open_notional())
 
     def start_background(self) -> None:
@@ -116,17 +257,32 @@ class ExecEngine:
         last_book = 0.0
         last_markets = 0.0
         logger.info(
-            "ExecEngine started mode=%s live=%s mock=%s cities=%d",
+            "ExecEngine started mode=%s live=%s live_clob=%s mock=%s cities=%d "
+            "budget_usd=%.2f creds=%s sig_type=%s funder_set=%s kill_default=%s",
             self.settings.trading_mode,
             self.settings.is_live,
+            self.settings.is_live and self.settings.has_poly_creds,
             self.settings.mock_markets,
             len(self.cities),
+            self._cash_budget(),
+            self.settings.has_poly_creds,
+            int(self.settings.poly_signature_type or 0),
+            bool(self.settings.poly_funder),
+            self.settings.kill_switch_default,
         )
-        self.markets.refresh_markets()
+        try:
+            self._refresh_wallet(force=True)
+        except Exception:
+            logger.exception("wallet refresh failed on boot")
+        try:
+            self.markets.refresh_markets()
+        except Exception:
+            logger.exception("market refresh failed on boot")
         self._publish()
         while not self._stop.is_set():
             now = time.time()
             try:
+                self._refresh_wallet()
                 rotate = self.settings.mock_markets and (now - self._last_rotate >= self._rotate_sec)
                 if now - last_markets >= market_every or rotate:
                     self.markets.refresh_markets(force_new=rotate)
@@ -142,6 +298,32 @@ class ExecEngine:
                     self._settle_paper()
                     self._decide_and_trade()
                     last_book = now
+                    snap = self.store.snapshot()
+                    skip_n = len(snap.get("skips") or [])
+                    fill_n = len(snap.get("fills") or [])
+                    logger.info(
+                        "tick=%d mode=%s armed=%s markets=%d quotes=%d open=%d "
+                        "wallet=%s budget=%.2f effective=%.2f fills=%d skips=%d "
+                        "live_orders=%d/%d venue_err=%.3f",
+                        self._tick,
+                        "live" if self.settings.is_live else "paper",
+                        (not self.risk.state.killed) and self.risk.state.sleeve_no_eliminated,
+                        len(self.markets.markets),
+                        sum(
+                            1
+                            for q in self.markets.quotes.values()
+                            if q.no_ask is not None or q.no_mid is not None
+                        ),
+                        len(self._open),
+                        self._wallet_usd,
+                        self._cash_budget(),
+                        self._effective_budget(),
+                        fill_n,
+                        skip_n,
+                        self._live_order_ok,
+                        self._live_order_attempts,
+                        self.venue.error_rate,
+                    )
                 self._publish()
             except Exception:
                 logger.exception("loop error")
@@ -308,12 +490,13 @@ class ExecEngine:
             return
         size, size_why = budget_ticket_usd(
             self.strategy,
-            budget_usd=self._budget_usd,
+            budget_usd=self._effective_budget(),
             open_notional=self._open_notional(),
             edge=decision.net_edge,
             stake_multiplier=self.risk.state.stake_multiplier,
             max_deploy_frac=self._max_deploy_frac,
             max_per_fill_usd=self.risk.max_per_fill_usd,
+            min_ticket_usd=1.0 if self.settings.is_live else 0.50,
         )
         if size <= 0:
             self._skip(
@@ -325,6 +508,20 @@ class ExecEngine:
             )
             return
         ask = float(quote.no_ask or quote.no_mid or decision.no_price)
+        ex = self.strategy.get("execution") or {}
+        if bool(ex.get("size_to_book_depth", True)):
+            depth = float(getattr(quote, "depth_no_usd", 0) or 0)
+            min_t = 1.0 if self.settings.is_live else 0.50
+            if depth + 1e-9 < min_t:
+                self._skip(
+                    city=city,
+                    market=market,
+                    reason="book_thin",
+                    no_price=decision.no_price,
+                    edge=decision.net_edge,
+                )
+                return
+            size = round(min(size, depth), 2)
         age = None if not st else st.obs_age_minutes
         # Paper/mock: don't stall on slightly stale IEM ages
         if not self.settings.is_live and age is not None and age > self.risk.max_metar_age_minutes:
@@ -335,9 +532,10 @@ class ExecEngine:
             size_usd=size,
             metar_age_minutes=age,
             venue_error_rate=self.venue.error_rate,
+            venue_attempts=self.venue.attempts,
             already_open=market.market_id in self._open,
             open_notional=self._open_notional(),
-            budget_usd=self._budget_usd,
+            budget_usd=self._effective_budget(),
         )
         if not ok:
             self._skip(
@@ -348,17 +546,30 @@ class ExecEngine:
                 edge=decision.net_edge,
             )
             return
-        fill = self.venue.buy_no_taker(
-            market_id=market.market_id,
-            location_id=city["location_id"],
-            no_token_id=market.no_token_id,
-            ask=ask,
-            size_usd=size,
-            order_type=str((self.strategy.get("execution") or {}).get("order_type", "FOK")),
-            question=market.question,
-            edge=decision.net_edge,
-            depth_usd=float(quote.depth_no_usd or 0),
-        )
+        try:
+            fill = self.venue.buy_no_taker(
+                market_id=market.market_id,
+                location_id=city["location_id"],
+                no_token_id=market.no_token_id,
+                ask=ask,
+                size_usd=size,
+                order_type=str((self.strategy.get("execution") or {}).get("order_type", "FOK")),
+                question=market.question,
+                edge=decision.net_edge,
+                depth_usd=float(getattr(quote, "depth_no_usd", 0) or 0),
+                neg_risk=bool(getattr(market, "neg_risk", True)),
+                tick_size=str(getattr(market, "tick_size", "0.01") or "0.01"),
+            )
+        except Exception as e:
+            logger.exception("CLOB BUY NO raised market=%s", market.market_id)
+            self._skip(
+                city=city,
+                market=market,
+                reason=f"clob_error:{type(e).__name__}",
+                no_price=decision.no_price,
+                edge=decision.net_edge,
+            )
+            return
         pm_url = getattr(market, "polymarket_url", None) or polymarket_event_url(
             city_slug=city["polymarket_slug_city"],
             kind=market.kind,
@@ -374,32 +585,45 @@ class ExecEngine:
             "end_date": getattr(market, "end_date", None),
         }
         self.store.append_fill(fill_row)
-        if fill.status in {"filled", "submitted"}:
-            self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
-            pos = {
-                "market_id": market.market_id,
-                "location_id": city["location_id"],
-                "city": city["polymarket_slug_city"],
-                "side": "BUY_NO",
-                "entry_price": fill.price,
-                "size_usd": fill.size_usd,
-                "shares": fill.shares,
-                "mode": fill.mode,
-                "opened_at": fill.ts,
-                "question": market.question,
-                "status": "open",
-                "mark_no": ask,
-                "unrealized_pnl": 0.0,
-                "edge": decision.net_edge,
-                "fill_id": fill.fill_id,
-                "kind": market.kind,
-                "lo": market.lo,
-                "hi": market.hi,
-                "entry_elim": True,  # hard elim only — honor on settle if METAR drops
-                "polymarket_url": pm_url,
-                "end_date": getattr(market, "end_date", None),
-            }
-            self._open[market.market_id] = pos
+        if fill.status not in {"filled", "submitted"}:
+            self._skip(
+                city=city,
+                market=market,
+                reason=str(fill.status),
+                no_price=decision.no_price,
+                edge=decision.net_edge,
+            )
+            if self.settings.is_live:
+                self._live_order_attempts += 1
+            return
+        if fill.mode == "live":
+            self._live_order_attempts += 1
+            self._live_order_ok += 1
+        self.risk.register_fill(market.market_id, city["location_id"], fill.size_usd)
+        pos = {
+            "market_id": market.market_id,
+            "location_id": city["location_id"],
+            "city": city["polymarket_slug_city"],
+            "side": "BUY_NO",
+            "entry_price": fill.price,
+            "size_usd": fill.size_usd,
+            "shares": fill.shares,
+            "mode": fill.mode,
+            "opened_at": fill.ts,
+            "question": market.question,
+            "status": "open",
+            "mark_no": ask,
+            "unrealized_pnl": 0.0,
+            "edge": decision.net_edge,
+            "fill_id": fill.fill_id,
+            "kind": market.kind,
+            "lo": market.lo,
+            "hi": market.hi,
+            "entry_elim": True,  # hard elim only — honor on settle if METAR drops
+            "polymarket_url": pm_url,
+            "end_date": getattr(market, "end_date", None),
+        }
+        self._open[market.market_id] = pos
 
     def _settle_paper(self) -> None:
         if self.settings.is_live:
@@ -440,7 +664,7 @@ class ExecEngine:
                 if (
                     bid is not None
                     and bid < scalp_bid
-                    and (self.settings.mock_markets or not self.settings.pmxt_api_key)
+                    and self.settings.mock_markets
                     and pos.get("entry_elim")
                     and still_elim is not False
                 ):
@@ -478,6 +702,7 @@ class ExecEngine:
             else:
                 self._losses += 1
             self.risk.state.daily_realized_pnl += pnl
+            self._realized_pnl_total += pnl
             self.risk.state.open_locations.discard(pos["location_id"])
             self.store.append_settlement(
                 {
@@ -507,7 +732,7 @@ class ExecEngine:
         for mid in done:
             self._open.pop(mid, None)
 
-    def _publish(self) -> None:
+    def _publish(self, *, force: bool = False) -> None:
         positions = []
         unreal = 0.0
         for mid, pos in self._open.items():
@@ -524,26 +749,51 @@ class ExecEngine:
             worst_age = st.obs_age_minutes if worst_age is None else max(worst_age, st.obs_age_minutes)
 
         snap = self.store.snapshot()
+        fills = snap.get("fills") or []
+        paper_fills = sum(1 for f in fills if str(f.get("mode") or "") == "paper")
+        live_fills = sum(1 for f in fills if str(f.get("mode") or "") == "live")
         open_notional = round(self._open_notional(), 2)
         deployable = round(self._deployable(), 2)
-        gains = round(self.risk.state.daily_realized_pnl + unreal, 2)
+        cash = round(self._cash_budget(), 2)
+        pnl_today = round(self.risk.state.daily_realized_pnl + unreal, 2)
+        # Lifetime realized — this is what the Gains card must keep across restarts.
+        gains = round(self._realized_pnl_total + unreal, 2)
+        eff = round(self._effective_budget(), 2)
+        wallet = None if self._wallet_usd is None else round(float(self._wallet_usd), 2)
+        if self.settings.is_live:
+            base_eq = wallet if wallet is not None else cash
+            equity = round(base_eq + pnl_today, 2)
+        else:
+            # Paper cash already includes realized PnL; don't add lifetime gains twice.
+            equity = round(cash + unreal, 2)
         status = {
             "armed": not self.risk.state.killed and self.risk.state.sleeve_no_eliminated,
             "killed": self.risk.state.killed,
             "kill_reason": self.risk.state.kill_reason,
             "mode": "live" if self.settings.is_live else "paper",
-            "mock_markets": self.settings.mock_markets or not self.settings.pmxt_api_key,
+            "mock_markets": self.settings.mock_markets,
+            "live_clob": self.settings.is_live and self.settings.has_poly_creds,
             "open_no_count": len(positions),
-            "budget_usd": round(self._budget_usd, 2),
+            "budget_usd": cash,
+            "starting_budget_usd": round(self._starting_budget_usd, 2),
+            "effective_budget_usd": eff,
+            "wallet_usd": wallet,
+            "wallet_allowance_usd": None
+            if self._wallet_allowance_usd is None
+            else round(float(self._wallet_allowance_usd), 2),
+            "wallet_error": self._wallet_error,
+            "wallet_ts": self._wallet_ts,
+            "poly_sig_type": int(self.settings.poly_signature_type or 0),
+            "poly_funder_set": bool(self.settings.poly_funder),
             "gains_usd": gains,
-            "pnl_today": gains,
+            "pnl_today": pnl_today,
             "realized_pnl": round(self.risk.state.daily_realized_pnl, 2),
             "unrealized_pnl": round(unreal, 2),
             "open_notional": open_notional,
             "deployable_usd": deployable,
             "max_deploy_frac": self._max_deploy_frac,
-            "cash_reserve_usd": round(self._budget_usd - open_notional, 2),
-            "equity_usd": round(self._budget_usd + gains, 2),
+            "cash_reserve_usd": round(eff - open_notional, 2),
+            "equity_usd": equity,
             "wins": self._wins,
             "losses": self._losses,
             "metar_age_worst_min": None if worst_age is None else round(worst_age, 1),
@@ -554,61 +804,71 @@ class ExecEngine:
             "started_at": self._started,
             "markets_tracked": len(self.markets.markets),
             "cities_tracked": len(self.cities),
-            "fills_count": len(snap.get("fills") or []),
+            "fills_count": len(fills),
+            "fills_paper": paper_fills,
+            "fills_live": live_fills,
+            "live_order_attempts": self._live_order_attempts,
+            "live_order_ok": self._live_order_ok,
             "skips_count": len(snap.get("skips") or []),
             "settlements_count": len(snap.get("settlements") or []),
         }
-        self.store.set_status(status)
-        self.store.set_positions(positions)
-        self.store.set_pnl(
-            {
+        self.store.apply(
+            force=force,
+            status=status,
+            positions=positions,
+            pnl={
                 "budget_usd": status["budget_usd"],
                 "gains_usd": gains,
                 "realized": status["realized_pnl"],
                 "unrealized": status["unrealized_pnl"],
-                "today": gains,
+                "today": pnl_today,
                 "open_notional": open_notional,
                 "deployable_usd": deployable,
                 "max_deploy_frac": self._max_deploy_frac,
                 "equity_usd": status["equity_usd"],
                 "wins": self._wins,
                 "losses": self._losses,
-            }
-        )
-        self.store.set_controls(
-            {
+            },
+            controls={
                 **self.risk.snapshot(),
                 "budget_usd": status["budget_usd"],
                 "bankroll_usd": status["budget_usd"],
+                "starting_budget_usd": round(self._starting_budget_usd, 2),
+                "budget_pnl_basis": round(self._budget_pnl_basis, 4),
                 "open_notional": open_notional,
                 "deployable_usd": deployable,
                 "max_deploy_frac": self._max_deploy_frac,
                 "gains_usd": gains,
+                "wallet_usd": status.get("wallet_usd"),
+                "effective_budget_usd": status.get("effective_budget_usd"),
                 "trading_mode": status["mode"],
                 "live_trading_flag": self.settings.live_trading,
-            }
+            },
         )
 
     def kill(self, reason: str = "manual") -> None:
         self.risk.kill(reason)
-        self._publish()
+        self._publish(force=True)
 
     def arm(self) -> None:
         self.risk.arm()
-        self._publish()
+        self._publish(force=True)
 
     def set_sleeve(self, enabled: bool) -> None:
         self.risk.state.sleeve_no_eliminated = bool(enabled)
-        self._publish()
+        self._publish(force=True)
 
     def set_stake_mult(self, mult: float) -> None:
-        self.risk.state.stake_multiplier = max(0.0, min(5.0, float(mult)))
-        self._publish()
+        self.risk.state.stake_multiplier = float(max(0.0, min(5.0, float(mult))))
+        self._publish(force=True)
 
     def set_budget(self, budget_usd: float) -> None:
-        """Persist operating budget (dashboard + ledger)."""
+        """Set current paper/live bankroll. Future paper PnL compounds from this mark."""
         v = float(budget_usd)
         if v < 10 or v > 1_000_000:
             raise ValueError("budget_usd must be between 10 and 1000000")
-        self._budget_usd = round(v, 2)
-        self._publish()
+        v = round(v, 2)
+        self._starting_budget_usd = v
+        self._budget_pnl_basis = float(self._realized_pnl_total)
+        self._budget_usd = v
+        self._publish(force=True)

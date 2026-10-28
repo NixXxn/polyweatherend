@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,15 +18,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Modes
-    trading_mode: str = Field(default="paper", alias="TRADING_MODE")  # paper|live
-    live_trading: bool = Field(default=False, alias="LIVE_TRADING")
-    mock_markets: bool = Field(default=True, alias="MOCK_MARKETS")
+    trading_mode: str = Field(default="live", alias="TRADING_MODE")  # paper|live
+    live_trading: bool = Field(default=True, alias="LIVE_TRADING")
+    mock_markets: bool = Field(default=False, alias="MOCK_MARKETS")
 
-    # Venue
-    pmxt_api_key: str | None = Field(default=None, alias="PMXT_API_KEY")
-    pmxt_wallet_address: str | None = Field(default=None, alias="PMXT_WALLET_ADDRESS")
-    pmxt_catalog_url: str = Field(default="https://api.pmxt.dev", alias="PMXT_CATALOG_URL")
-    pmxt_trade_url: str = Field(default="https://trade.pmxt.dev", alias="PMXT_TRADE_URL")
+    # Polymarket CLOB + Gamma
+    poly_private_key: str | None = Field(default=None, alias="POLY_PRIVATE_KEY")
+    poly_api_key: str | None = Field(default=None, alias="POLY_API_KEY")
+    poly_api_secret: str | None = Field(default=None, alias="POLY_API_SECRET")
+    poly_api_passphrase: str | None = Field(default=None, alias="POLY_API_PASSPHRASE")
+    poly_signature_type: int = Field(default=0, alias="POLY_SIGNATURE_TYPE")
+    poly_funder: str | None = Field(default=None, alias="POLY_FUNDER")
+    poly_clob_host: str = Field(default="https://clob.polymarket.com", alias="POLY_CLOB_HOST")
+    poly_chain_id: int = Field(default=137, alias="POLY_CHAIN_ID")
+    poly_gamma_url: str = Field(default="https://gamma-api.polymarket.com", alias="POLY_GAMMA_URL")
 
     # Infra
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -36,14 +41,58 @@ class Settings(BaseSettings):
     cities_config: str = Field(default="config/cities.yaml", alias="CITIES_CONFIG")
 
     # Ops
-    kill_switch_default: bool = Field(default=False, alias="KILL_SWITCH")
+    kill_switch_default: bool = Field(default=True, alias="KILL_SWITCH")
     city_roles: str = Field(default="paper,strict,metar", alias="CITY_ROLES")
-    # Default operating budget (UI can override; persisted in ledger state)
     budget_usd: float | None = Field(default=None, alias="BUDGET_USD")
+
+    @field_validator(
+        "poly_signature_type",
+        "poly_chain_id",
+        "api_port",
+        mode="before",
+    )
+    @classmethod
+    def _empty_int_env(cls, v: Any, info: ValidationInfo) -> Any:
+        # Coolify often injects POLY_SIGNATURE_TYPE="" which used to crash-loop Settings().
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {
+                "poly_signature_type": 0,
+                "poly_chain_id": 137,
+                "api_port": 3847,
+            }[info.field_name]
+        return v
+
+    @field_validator(
+        "live_trading",
+        "mock_markets",
+        "kill_switch_default",
+        mode="before",
+    )
+    @classmethod
+    def _empty_bool_env(cls, v: Any, info: ValidationInfo) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {
+                "live_trading": True,
+                "mock_markets": False,
+                "kill_switch_default": True,
+            }[info.field_name]
+        return v
+
+    @field_validator("budget_usd", mode="before")
+    @classmethod
+    def _empty_float_env(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
 
     @property
     def is_live(self) -> bool:
         return self.trading_mode.lower() == "live" and self.live_trading
+
+    @property
+    def has_poly_creds(self) -> bool:
+        # L2 API keys can be derived from the private key at runtime.
+        return bool(self.poly_private_key)
 
 
 def load_yaml(path: Path | str) -> dict[str, Any]:
