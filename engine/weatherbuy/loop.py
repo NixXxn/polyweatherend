@@ -65,7 +65,9 @@ class ExecEngine:
         self._wins = 0
         self._losses = 0
         self._use_mock_metar = bool(paper.get("mock_metar_on_failure", True))
-        self._budget_usd = self._resolve_budget()
+        self._starting_budget_usd, self._budget_pnl_basis = self._resolve_starting_budget()
+        self._budget_usd = self._starting_budget_usd
+        self._realized_pnl_total = 0.0
         self._max_deploy_frac = float((self.strategy.get("risk") or {}).get("max_deploy_frac", 0.75))
         self._wallet_usd: float | None = None
         self._wallet_allowance_usd: float | None = None
@@ -76,26 +78,51 @@ class ExecEngine:
         self._live_order_ok = 0
         self._restore_open_from_store()
 
-    def _resolve_budget(self) -> float:
-        """Persisted controls → env BUDGET_USD → strategy bankroll."""
+    def _resolve_starting_budget(self) -> tuple[float, float]:
+        """User-set starting bankroll + PnL basis so restarts don't double-count.
+
+        Paper cash = starting + (ledger realized − basis). `budget_usd` in
+        controls is the *compounded* number we publish, so it must not be
+        reused as starting capital once `starting_budget_usd` exists.
+        """
         snap = self.store.snapshot()
         controls = snap.get("controls") or {}
-        for key in ("budget_usd", "bankroll_usd"):
-            if controls.get(key) is not None:
-                try:
-                    v = float(controls[key])
-                    if v > 0:
-                        return v
-                except (TypeError, ValueError):
-                    pass
-        if self.settings.budget_usd is not None:
+
+        def _pos(val: Any) -> float | None:
             try:
-                v = float(self.settings.budget_usd)
-                if v > 0:
-                    return v
+                v = float(val)
             except (TypeError, ValueError):
-                pass
-        return float(self.strategy.get("bankroll_usd") or self.strategy.get("budget_usd") or 500.0)
+                return None
+            return v if v > 0 else None
+
+        starting = _pos(controls.get("starting_budget_usd"))
+        if starting is not None:
+            basis = 0.0
+            if controls.get("budget_pnl_basis") is not None:
+                try:
+                    basis = float(controls["budget_pnl_basis"])
+                except (TypeError, ValueError):
+                    basis = 0.0
+            return starting, basis
+
+        if self.settings.budget_usd is not None:
+            v = _pos(self.settings.budget_usd)
+            if v is not None:
+                return v, 0.0
+        v = _pos(self.strategy.get("bankroll_usd") or self.strategy.get("budget_usd"))
+        if v is not None:
+            return v, 0.0
+        for key in ("budget_usd", "bankroll_usd"):
+            v = _pos(controls.get(key))
+            if v is not None:
+                return v, 0.0
+        return 500.0, 0.0
+
+    def _cash_budget(self) -> float:
+        """Paper bankroll compounds wins/losses; live stake cap stays user-set."""
+        if self.settings.is_live:
+            return self._budget_usd
+        return max(10.0, round(self._starting_budget_usd + self._realized_pnl_total - self._budget_pnl_basis, 2))
 
     def _restore_open_from_store(self) -> None:
         """Keep live (or paper) opens across process restarts so the dashboard list survives."""
@@ -124,12 +151,13 @@ class ExecEngine:
                 except (TypeError, ValueError):
                     pass
             restored += 1
-        settlements = snap.get("settlements") or []
-        matched = [
-            s for s in settlements if str(s.get("mode") or want_mode) == want_mode
-        ]
-        self._wins = sum(1 for s in matched if s.get("result") == "win")
-        self._losses = sum(1 for s in matched if s.get("result") == "loss")
+        stats = self.store.settlement_stats(mode=want_mode)
+        self._realized_pnl_total = float(stats.get("pnl") or 0.0)
+        self._wins = int(stats.get("wins") or 0)
+        self._losses = int(stats.get("losses") or 0)
+        today_stats = self.store.settlement_stats(mode=want_mode, day=today)
+        self.risk.state.daily_realized_pnl = float(today_stats.get("pnl") or 0.0)
+        self.risk.state.day = today
         fills = snap.get("fills") or []
         live_like = [f for f in fills if str(f.get("mode") or "") == want_mode]
         if self.settings.is_live:
@@ -143,14 +171,15 @@ class ExecEngine:
             )
 
     def _effective_budget(self) -> float:
-        """Stake cap is configured budget; never size above live wallet when known."""
+        """Stake cap is paper cash (compounded) or live min(cap, wallet)."""
+        cash = self._cash_budget()
         if (
             self.settings.is_live
             and self._wallet_usd is not None
             and self._wallet_usd > 0
         ):
-            return min(self._budget_usd, self._wallet_usd)
-        return self._budget_usd
+            return min(cash, self._wallet_usd)
+        return cash
 
     def _refresh_wallet(self, force: bool = False) -> None:
         now = time.time()
@@ -197,7 +226,7 @@ class ExecEngine:
             self.settings.is_live and self.settings.has_poly_creds,
             self.settings.mock_markets,
             len(self.cities),
-            self._budget_usd,
+            self._cash_budget(),
             self.settings.has_poly_creds,
             int(self.settings.poly_signature_type or 0),
             bool(self.settings.poly_funder),
@@ -243,7 +272,7 @@ class ExecEngine:
                         ),
                         len(self._open),
                         self._wallet_usd,
-                        self._budget_usd,
+                        self._cash_budget(),
                         self._effective_budget(),
                         fill_n,
                         skip_n,
@@ -629,6 +658,7 @@ class ExecEngine:
             else:
                 self._losses += 1
             self.risk.state.daily_realized_pnl += pnl
+            self._realized_pnl_total += pnl
             self.risk.state.open_locations.discard(pos["location_id"])
             self.store.append_settlement(
                 {
@@ -680,10 +710,16 @@ class ExecEngine:
         live_fills = sum(1 for f in fills if str(f.get("mode") or "") == "live")
         open_notional = round(self._open_notional(), 2)
         deployable = round(self._deployable(), 2)
+        cash = round(self._cash_budget(), 2)
         gains = round(self.risk.state.daily_realized_pnl + unreal, 2)
         eff = round(self._effective_budget(), 2)
         wallet = None if self._wallet_usd is None else round(float(self._wallet_usd), 2)
-        base_eq = wallet if wallet is not None else self._budget_usd
+        if self.settings.is_live:
+            base_eq = wallet if wallet is not None else cash
+            equity = round(base_eq + gains, 2)
+        else:
+            # Paper cash already includes realized PnL; don't add today's gains twice.
+            equity = round(cash + unreal, 2)
         status = {
             "armed": not self.risk.state.killed and self.risk.state.sleeve_no_eliminated,
             "killed": self.risk.state.killed,
@@ -692,7 +728,8 @@ class ExecEngine:
             "mock_markets": self.settings.mock_markets,
             "live_clob": self.settings.is_live and self.settings.has_poly_creds,
             "open_no_count": len(positions),
-            "budget_usd": round(self._budget_usd, 2),
+            "budget_usd": cash,
+            "starting_budget_usd": round(self._starting_budget_usd, 2),
             "effective_budget_usd": eff,
             "wallet_usd": wallet,
             "wallet_allowance_usd": None
@@ -710,7 +747,7 @@ class ExecEngine:
             "deployable_usd": deployable,
             "max_deploy_frac": self._max_deploy_frac,
             "cash_reserve_usd": round(eff - open_notional, 2),
-            "equity_usd": round(base_eq + gains, 2),
+            "equity_usd": equity,
             "wins": self._wins,
             "losses": self._losses,
             "metar_age_worst_min": None if worst_age is None else round(worst_age, 1),
@@ -751,6 +788,8 @@ class ExecEngine:
                 **self.risk.snapshot(),
                 "budget_usd": status["budget_usd"],
                 "bankroll_usd": status["budget_usd"],
+                "starting_budget_usd": round(self._starting_budget_usd, 2),
+                "budget_pnl_basis": round(self._budget_pnl_basis, 4),
                 "open_notional": open_notional,
                 "deployable_usd": deployable,
                 "max_deploy_frac": self._max_deploy_frac,
@@ -779,9 +818,12 @@ class ExecEngine:
         self._publish()
 
     def set_budget(self, budget_usd: float) -> None:
-        """Persist operating budget (dashboard + ledger)."""
+        """Set current paper/live bankroll. Future paper PnL compounds from this mark."""
         v = float(budget_usd)
         if v < 10 or v > 1_000_000:
             raise ValueError("budget_usd must be between 10 and 1000000")
-        self._budget_usd = round(v, 2)
+        v = round(v, 2)
+        self._starting_budget_usd = v
+        self._budget_pnl_basis = float(self._realized_pnl_total)
+        self._budget_usd = v
         self._publish()

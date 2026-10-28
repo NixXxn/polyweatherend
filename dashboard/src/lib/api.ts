@@ -7,6 +7,7 @@ export type Snapshot = {
     live_clob?: boolean;
     mock_markets?: boolean;
     budget_usd?: number;
+    starting_budget_usd?: number;
     effective_budget_usd?: number;
     wallet_usd?: number | null;
     wallet_allowance_usd?: number | null;

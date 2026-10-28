@@ -154,6 +154,42 @@ class Store:
                 f.write(json.dumps(settlement) + "\n")
             self._persist()
 
+    def settlement_stats(self, *, mode: str | None = None, day: str | None = None) -> dict[str, Any]:
+        """Sum PnL / W/L from the on-disk ledger (not just the in-memory tail)."""
+        rows: list[dict[str, Any]] = []
+        if self.settlements_path.exists():
+            for line in self.settlements_path.read_text().splitlines():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        else:
+            rows = list(self._memory.get("settlements") or [])
+
+        want = None if mode is None else str(mode)
+        pnl = 0.0
+        wins = 0
+        losses = 0
+        n = 0
+        for s in rows:
+            row_mode = str(s.get("mode") or "paper")
+            if want is not None and row_mode != want:
+                continue
+            ts = str(s.get("ts") or "")
+            if day and not ts.startswith(day):
+                continue
+            try:
+                pnl += float(s.get("pnl_usd") or 0)
+            except (TypeError, ValueError):
+                pass
+            result = str(s.get("result") or "")
+            if result == "win":
+                wins += 1
+            elif result == "loss":
+                losses += 1
+            n += 1
+        return {"pnl": round(pnl, 4), "wins": wins, "losses": losses, "count": n}
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {

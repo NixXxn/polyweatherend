@@ -175,7 +175,7 @@ export default function OpsDashboard() {
             <div className="mono mt-2 text-[11px] text-[var(--muted)]">
               {status?.live_clob
                 ? `CLOB USDC · cap ${usd(budget)}`
-                : `deploy ≤${Math.round(deployFrac * 100)}% · free ${usd(deployable)}`}
+                : `W/L in bankroll · deploy ≤${Math.round(deployFrac * 100)}% · free ${usd(deployable)}`}
             </div>
           </div>
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] px-3.5 py-3.5">

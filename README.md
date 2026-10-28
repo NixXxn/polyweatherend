@@ -30,7 +30,7 @@ Never commit `.env`. Rotate any key that was pasted into chat or tickets.
 1. Discovers weather temp buckets via **Gamma** (`gamma-api.polymarket.com`).
 2. Quotes NO via public **CLOB** books (`clob.polymarket.com`).
 3. Gates with hard METAR elim + post-noon + NO band `0.90–0.98`.
-4. Sizes tickets from budget (max **75%** open / 25% cash reserve).
+4. Sizes tickets from budget (max **75%** open / 25% cash reserve). Paper bankroll **compounds** settlement wins/losses and reloads them from the ledger on restart.
 5. Sends **FOK taker BUY NO** through `py-clob-client` using your `POLY_*` creds.
 6. Ops UI: Budget / Gains hero, Arm / Kill, CSV, Polymarket links.
 
