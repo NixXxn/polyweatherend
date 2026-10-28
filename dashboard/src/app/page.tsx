@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   API_URL,
   csvExportUrl,
@@ -19,6 +19,21 @@ function money(n: number | undefined | null) {
 function usd(n: number | undefined | null) {
   if (n == null || Number.isNaN(n)) return "—";
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function settlementRecord(
+  rows: { result?: string; pnl_usd?: number; mode?: string }[] | undefined,
+) {
+  let wins = 0;
+  let losses = 0;
+  let pnl = 0;
+  for (const s of rows ?? []) {
+    if (s.result === "win") wins += 1;
+    else if (s.result === "loss") losses += 1;
+    const n = Number(s.pnl_usd);
+    if (Number.isFinite(n)) pnl += n;
+  }
+  return { wins, losses, pnl };
 }
 
 function badgeClass(badge: string) {
@@ -63,6 +78,9 @@ export default function OpsDashboard() {
   );
   const [budgetDraft, setBudgetDraft] = useState("");
   const [editingBudget, setEditingBudget] = useState(false);
+  const heldStats = useRef<{ wins: number; losses: number; gains: number } | null>(
+    null,
+  );
 
   const reload = useCallback(async () => {
     try {
@@ -122,16 +140,32 @@ export default function OpsDashboard() {
   const liveSettlements = settlements.filter((s) => s.mode === "live");
   const paperSettlements = settlements.filter((s) => s.mode !== "live");
   const modeSettlements = liveClob ? liveSettlements : paperSettlements;
-  const wins =
-    modeSettlements.length > 0
-      ? modeSettlements.filter((s) => s.result === "win").length
-      : (status?.wins ?? 0);
-  const losses =
-    modeSettlements.length > 0
-      ? modeSettlements.filter((s) => s.result === "loss").length
-      : (status?.losses ?? 0);
+  const modeWL = settlementRecord(modeSettlements);
+  const allWL = settlementRecord(settlements);
+  // Engine status is canonical (restored from the full ledger). Never let an
+  // empty live filter zero out paper history sitting in the same snapshot.
+  let wins = status?.wins ?? 0;
+  let losses = status?.losses ?? 0;
+  if (wins + losses === 0) {
+    const fallback =
+      modeWL.wins + modeWL.losses > 0 ? modeWL : allWL;
+    if (fallback.wins + fallback.losses > 0) {
+      wins = fallback.wins;
+      losses = fallback.losses;
+    }
+  }
   const budget = status?.budget_usd ?? snap?.controls?.budget_usd;
-  const gains = status?.gains_usd ?? status?.pnl_today ?? 0;
+  let gains = status?.gains_usd ?? 0;
+  if (!gains && status?.pnl_today) gains = status.pnl_today;
+  if (!gains && allWL.pnl) gains = allWL.pnl;
+  const tick = status?.tick ?? 0;
+  if (wins + losses > 0 || Math.abs(gains) > 0.0001) {
+    heldStats.current = { wins, losses, gains };
+  } else if (heldStats.current && tick === 0) {
+    wins = heldStats.current.wins;
+    losses = heldStats.current.losses;
+    gains = heldStats.current.gains;
+  }
   const openNotional = status?.open_notional ?? 0;
   const deployable = status?.deployable_usd ?? 0;
   const deployFrac = status?.max_deploy_frac ?? 0.75;
@@ -223,7 +257,7 @@ export default function OpsDashboard() {
       )}
 
       <section
-        className={`anim-rise rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4 ${armed ? "armed-glow" : ""}`}
+        className={`rounded-2xl border border-[var(--line)] bg-[var(--bg-elev)] p-4 ${armed ? "armed-glow" : ""}`}
       >
         <div className="grid grid-cols-4 gap-2">
           {[

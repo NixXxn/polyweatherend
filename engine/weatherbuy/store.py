@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from dataclasses import asdict
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,9 @@ class Store:
                 logger.warning("Redis unavailable (%s); using in-memory store", e)
                 self._r = None
 
+        self._last_persist_payload: str | None = None
+        self._last_persist_at = 0.0
+        self.persist_writes = 0
         self._load_local()
 
     def _load_local(self) -> None:
@@ -68,8 +72,15 @@ class Store:
                 except json.JSONDecodeError:
                     continue
             self._memory["fills"] = fills
-        self._memory["skips"] = self._read_jsonl(self.skips_path, 400)
-        self._memory["settlements"] = self._read_jsonl(self.settlements_path, 300)
+        skips = self._read_jsonl(self.skips_path, 400)
+        if skips or not self._memory.get("skips"):
+            self._memory["skips"] = skips
+        settlements = self._read_jsonl(self.settlements_path, 300)
+        # jsonl is canonical when present; don't wipe settlements that only lived in state.json
+        if settlements:
+            self._memory["settlements"] = settlements
+        elif not self._memory.get("settlements"):
+            self._memory["settlements"] = []
 
 
     def _read_jsonl(self, path: Path, n: int) -> list[dict[str, Any]]:
@@ -83,23 +94,71 @@ class Store:
                 continue
         return rows
 
-    def _persist(self) -> None:
-        payload = {
-            "status": self._memory.get("status", {}),
-            "cities": self._memory.get("cities", []),
+    def _durable_payload(self) -> dict[str, Any]:
+        """Fields that must survive a restart. Volatile tick/ts/cities stay in memory only.
+
+        Heartbeat rewrites of state.json (especially `updated_at`) were restarting
+        file-watched deploys every second, which made Gains/W/L flash then zero.
+        """
+        volatile = {
+            "tick",
+            "started_at",
+            "last_metar_ts",
+            "last_book_ts",
+            "wallet_ts",
+            "venue_error_rate",
+            "markets_tracked",
+            "cities_tracked",
+        }
+        status = {
+            k: v
+            for k, v in dict(self._memory.get("status") or {}).items()
+            if k not in volatile
+        }
+        return {
+            "status": status,
             "positions": self._memory.get("positions", []),
             "controls": self._memory.get("controls", {}),
             "pnl": self._memory.get("pnl", {}),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        self.state_path.write_text(json.dumps(payload, indent=2))
+
+    def _atomic_write(self, text: str) -> None:
+        tmp = self.state_path.with_name(self.state_path.name + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, self.state_path)
+
+    def _persist(self, *, force: bool = False) -> None:
+        payload = self._durable_payload()
+        dumped = json.dumps(payload, indent=2, sort_keys=True)
+        now = time.monotonic()
+        if dumped == self._last_persist_payload:
+            return
+        if not force and (now - self._last_persist_at) < 2.0:
+            return
+        self._atomic_write(dumped)
+        self._last_persist_payload = dumped
+        self._last_persist_at = now
+        self.persist_writes += 1
         if self._r:
             try:
-                self._r.set("weatherbuy:state", json.dumps(payload))
-                self._r.set("weatherbuy:cities", json.dumps(self._memory.get("cities", [])))
-                self._r.set("weatherbuy:fills", json.dumps(self._memory.get("fills", [])[-50:]))
+                self._r.set("weatherbuy:state", dumped)
+                self._r.set(
+                    "weatherbuy:cities",
+                    json.dumps(self._memory.get("cities", [])),
+                )
+                self._r.set(
+                    "weatherbuy:fills",
+                    json.dumps(self._memory.get("fills", [])[-50:]),
+                )
             except Exception as e:
                 logger.debug("redis write failed: %s", e)
+
+    def apply(self, *, force: bool = False, **keys: Any) -> None:
+        """Update several snapshot keys under one lock / one persist."""
+        with self._lock:
+            for key, value in keys.items():
+                self._memory[key] = value
+            self._persist(force=force)
 
     def set_status(self, status: dict[str, Any]) -> None:
         with self._lock:
@@ -109,12 +168,12 @@ class Store:
     def set_cities(self, cities: list[dict[str, Any]]) -> None:
         with self._lock:
             self._memory["cities"] = cities
-            self._persist()
+            # Cities rebuild every METAR tick — keep them in RAM, not on disk.
 
-    def set_controls(self, controls: dict[str, Any]) -> None:
+    def set_controls(self, controls: dict[str, Any], *, force: bool = True) -> None:
         with self._lock:
             self._memory["controls"] = controls
-            self._persist()
+            self._persist(force=force)
 
     def set_pnl(self, pnl: dict[str, Any]) -> None:
         with self._lock:
@@ -134,7 +193,7 @@ class Store:
             self._memory["fills"] = fills[-200:]
             with self.fills_path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
-            self._persist()
+            self._persist(force=True)
 
 
     def append_skip(self, skip: dict[str, Any]) -> None:
@@ -152,7 +211,7 @@ class Store:
             self._memory["settlements"] = rows[-300:]
             with self.settlements_path.open("a") as f:
                 f.write(json.dumps(settlement) + "\n")
-            self._persist()
+            self._persist(force=True)
 
     def settlement_stats(self, *, mode: str | None = None, day: str | None = None) -> dict[str, Any]:
         """Sum PnL / W/L from the on-disk ledger (not just the in-memory tail)."""

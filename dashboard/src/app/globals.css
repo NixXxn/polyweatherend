@@ -78,6 +78,12 @@ body {
   animation: pulse-armed 2.4s ease-in-out infinite;
 }
 
+.anim-rise.armed-glow {
+  animation:
+    rise-in 0.35s var(--ease) both,
+    pulse-armed 2.4s ease-in-out 0.35s infinite;
+}
+
 .tap {
   transition:
     transform 0.15s var(--ease),

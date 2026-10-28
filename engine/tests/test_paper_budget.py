@@ -93,6 +93,72 @@ def test_set_budget_is_new_mark_not_double_count(tmp_path, monkeypatch):
     assert eng2._cash_budget() == 800.0
 
 
+def test_snapshot_has_restored_stats_before_loop(tmp_path, monkeypatch):
+    eng = _engine(tmp_path, monkeypatch)
+    eng._open["m1"] = _open_pos()
+    eng._settle_paper()
+    eng._publish(force=True)
+    eng.stop()
+
+    eng2 = _engine(tmp_path, monkeypatch)
+    snap = eng2.store.snapshot()["status"]
+    assert snap["wins"] == 1
+    assert snap["gains_usd"] == 1.0
+    assert snap["budget_usd"] == 501.0
+
+
+def test_live_boot_keeps_paper_ledger_stats(tmp_path, monkeypatch):
+    eng = _engine(tmp_path, monkeypatch)
+    eng._open["m1"] = _open_pos()
+    eng._settle_paper()
+    eng._publish(force=True)
+    eng.stop()
+
+    live = _engine(
+        tmp_path,
+        monkeypatch,
+        settings=_paper_settings(TRADING_MODE="live", LIVE_TRADING=True, MOCK_MARKETS=False),
+    )
+    snap = live.store.snapshot()["status"]
+    assert live._wins == 1
+    assert snap["wins"] == 1
+    assert snap["gains_usd"] == 1.0
+
+
+def test_heartbeat_does_not_rewrite_unchanged_state(tmp_path, monkeypatch):
+    eng = _engine(tmp_path, monkeypatch)
+    eng._open["m1"] = _open_pos()
+    eng._settle_paper()
+    eng._publish(force=True)
+    writes = eng.store.persist_writes
+    eng._publish()
+    eng._publish()
+    eng._publish()
+    assert eng.store.persist_writes == writes
+
+
+def test_arm_survives_kill_switch_restart(tmp_path, monkeypatch):
+    eng = _engine(tmp_path, monkeypatch, settings=_paper_settings(KILL_SWITCH=True))
+    assert eng.risk.state.killed
+    eng.arm()
+    assert not eng.risk.state.killed
+    eng.stop()
+
+    eng2 = _engine(tmp_path, monkeypatch, settings=_paper_settings(KILL_SWITCH=True))
+    assert not eng2.risk.state.killed
+    assert eng2.store.snapshot()["status"]["armed"] is True
+
+
+def test_empty_poly_signature_type_does_not_crash(monkeypatch):
+    monkeypatch.setenv("POLY_SIGNATURE_TYPE", "")
+    monkeypatch.setenv("POLY_CHAIN_ID", "")
+    monkeypatch.setenv("BUDGET_USD", "")
+    s = Settings()
+    assert s.poly_signature_type == 0
+    assert s.poly_chain_id == 137
+    assert s.budget_usd is None
+
+
 def test_paper_loss_reduces_budget(tmp_path, monkeypatch):
     eng = _engine(tmp_path, monkeypatch)
     # still_elim False → exit 0, lose full entry

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,46 @@ class Settings(BaseSettings):
     kill_switch_default: bool = Field(default=True, alias="KILL_SWITCH")
     city_roles: str = Field(default="paper,strict,metar", alias="CITY_ROLES")
     budget_usd: float | None = Field(default=None, alias="BUDGET_USD")
+
+    @field_validator(
+        "poly_signature_type",
+        "poly_chain_id",
+        "api_port",
+        mode="before",
+    )
+    @classmethod
+    def _empty_int_env(cls, v: Any, info: ValidationInfo) -> Any:
+        # Coolify often injects POLY_SIGNATURE_TYPE="" which used to crash-loop Settings().
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {
+                "poly_signature_type": 0,
+                "poly_chain_id": 137,
+                "api_port": 3847,
+            }[info.field_name]
+        return v
+
+    @field_validator(
+        "live_trading",
+        "mock_markets",
+        "kill_switch_default",
+        mode="before",
+    )
+    @classmethod
+    def _empty_bool_env(cls, v: Any, info: ValidationInfo) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return {
+                "live_trading": True,
+                "mock_markets": False,
+                "kill_switch_default": True,
+            }[info.field_name]
+        return v
+
+    @field_validator("budget_usd", mode="before")
+    @classmethod
+    def _empty_float_env(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
 
     @property
     def is_live(self) -> bool:
