@@ -21,6 +21,9 @@ def no_eliminated_cfg(strategy: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(raw.get("enabled", True)),
         "max_hours_to_noon": float(raw.get("max_hours_to_noon", 6.0)),
         "prefer_post_noon": bool(raw.get("prefer_post_noon", True)),
+        # Last N hours before local midnight (daily weather market end).
+        "max_hours_to_end": float(raw.get("max_hours_to_end", 8.0)),
+        "min_hours_to_end": float(raw.get("min_hours_to_end", 0.5)),
         "min_no_price": float(raw.get("min_no_price", 0.90)),
         "max_no_price": float(raw.get("max_no_price", 0.98)),
         "min_net_edge": float(raw.get("min_net_edge", 0.02)),
@@ -47,9 +50,17 @@ def evaluate_no_eliminated(
     # hours_to_noon: after noon is negative; window is hours <= max
     if float(hours) > float(cfg["max_hours_to_noon"]):
         return NoElimDecision(False, "outside_no_window", no_price=float(no_price))
-    # Prefer post-noon entries (wallet median ≈ −1h); reject pre-noon when enabled
+    # Prefer post-noon entries; reject pre-noon when enabled
     if cfg.get("prefer_post_noon", True) and float(hours) > 0.0:
         return NoElimDecision(False, "before_noon", no_price=float(no_price))
+    # Local midnight ≈ daily weather market end. Noon is 12h before that.
+    hours_to_end = 12.0 + float(hours)
+    max_to_end = float(cfg.get("max_hours_to_end", 8.0))
+    min_to_end = float(cfg.get("min_hours_to_end", 0.5))
+    if hours_to_end > max_to_end:
+        return NoElimDecision(False, "too_early", no_price=float(no_price))
+    if hours_to_end < min_to_end:
+        return NoElimDecision(False, "too_late", no_price=float(no_price))
     if cfg.get("require_eliminated", True) and not bool(eliminated):
         return NoElimDecision(False, "not_eliminated", no_price=float(no_price))
     try:

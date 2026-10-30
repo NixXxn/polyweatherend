@@ -443,4 +443,6 @@ cities:
 window:
   max_hours_to_noon: 6
   prefer_post_noon: true
+  max_hours_to_end: 8
+  min_hours_to_end: 0.5
   min_hours_before_noon_to_skip: 12

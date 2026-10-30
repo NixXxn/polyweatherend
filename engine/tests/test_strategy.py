@@ -7,31 +7,47 @@ def _cfg(**overrides):
     return no_eliminated_cfg({"no_eliminated": {"enabled": True, **overrides}})
 
 
-def test_ok_elim_post_noon():
+def test_ok_elim_late_day():
     cfg = _cfg()
-    d = evaluate_no_eliminated(hours=-1.0, eliminated=True, no_price=0.95, cfg=cfg)
+    # 17:00 local → 7h to midnight, inside last-8h window
+    d = evaluate_no_eliminated(hours=-5.0, eliminated=True, no_price=0.95, cfg=cfg)
     assert d.ok
     assert d.reason == "ok"
     assert d.net_edge is not None and d.net_edge >= 0.02
 
 
+def test_reject_too_early_after_noon():
+    cfg = _cfg()
+    # 13:00 local still has 11h to end — daily high often not in yet
+    d = evaluate_no_eliminated(hours=-1.0, eliminated=True, no_price=0.95, cfg=cfg)
+    assert not d.ok
+    assert d.reason == "too_early"
+
+
+def test_reject_too_late_near_midnight():
+    cfg = _cfg()
+    d = evaluate_no_eliminated(hours=-11.8, eliminated=True, no_price=0.95, cfg=cfg)
+    assert not d.ok
+    assert d.reason == "too_late"
+
+
 def test_reject_not_eliminated():
     cfg = _cfg()
-    d = evaluate_no_eliminated(hours=-1.0, eliminated=False, no_price=0.95, cfg=cfg)
+    d = evaluate_no_eliminated(hours=-5.0, eliminated=False, no_price=0.95, cfg=cfg)
     assert not d.ok
     assert d.reason == "not_eliminated"
 
 
 def test_reject_price_high():
     cfg = _cfg()
-    d = evaluate_no_eliminated(hours=-1.0, eliminated=True, no_price=0.995, cfg=cfg)
+    d = evaluate_no_eliminated(hours=-5.0, eliminated=True, no_price=0.995, cfg=cfg)
     assert not d.ok
     assert d.reason == "no_price_high"
 
 
 def test_reject_price_below_dense_band():
     cfg = _cfg()
-    d = evaluate_no_eliminated(hours=-1.0, eliminated=True, no_price=0.85, cfg=cfg)
+    d = evaluate_no_eliminated(hours=-5.0, eliminated=True, no_price=0.85, cfg=cfg)
     assert not d.ok
     assert d.reason == "no_price_low"
 
@@ -51,7 +67,7 @@ def test_reject_before_noon_when_prefer_post():
 
 
 def test_allow_before_noon_when_prefer_off():
-    cfg = _cfg(prefer_post_noon=False)
+    cfg = _cfg(prefer_post_noon=False, max_hours_to_end=24, min_hours_to_end=0)
     d = evaluate_no_eliminated(hours=2.0, eliminated=True, no_price=0.95, cfg=cfg)
     assert d.ok
 
@@ -59,7 +75,7 @@ def test_allow_before_noon_when_prefer_off():
 def test_reject_net_edge_low():
     cfg = _cfg(min_net_edge=0.02, p_no_if_eliminated=0.99)
     # 0.975 → edge 0.015 < 0.02
-    d = evaluate_no_eliminated(hours=-1.0, eliminated=True, no_price=0.975, cfg=cfg)
+    d = evaluate_no_eliminated(hours=-5.0, eliminated=True, no_price=0.975, cfg=cfg)
     assert not d.ok
     assert d.reason == "net_edge_low"
 

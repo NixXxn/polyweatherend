@@ -434,7 +434,10 @@ class ExecEngine:
                     badge = "ELIM"
                     reason = "ok"
                     self._try_enter(city, m, q, decision, st)
-                elif elim and hours <= self.no_cfg["max_hours_to_noon"]:
+                elif elim and (
+                    hours <= self.no_cfg["max_hours_to_noon"]
+                    or decision.reason in {"too_early", "too_late", "before_noon"}
+                ):
                     if badge != "ELIM":
                         badge = "WATCH"
                         reason = decision.reason

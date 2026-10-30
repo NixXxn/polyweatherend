@@ -494,8 +494,13 @@ export default function OpsDashboard() {
                     <div className="mono mt-0.5 text-[11px] text-[var(--muted)]">
                       {c.icao}
                       {c.hours_to_noon != null
-                        ? ` · ${c.hours_to_noon > 0 ? `${c.hours_to_noon}h to noon` : `${Math.abs(c.hours_to_noon)}h past noon`}`
+                        ? ` · ${
+                            12 + c.hours_to_noon > 0
+                              ? `${(12 + c.hours_to_noon).toFixed(1)}h to end`
+                              : "past end"
+                          }`
                         : ""}
+                      {c.reason && c.reason !== "ok" ? ` · ${c.reason}` : ""}
                     </div>
                   </div>
                   <span
