@@ -9,7 +9,9 @@ stake_mult: 1.0
 no_eliminated:
   enabled: true
   max_hours_to_noon: 6
-  prefer_post_noon: true          # reject pre-noon (hours > 0); wallet median ~−1h
+  prefer_post_noon: true          # reject pre-noon (hours > 0)
+  max_hours_to_end: 8             # only last 8h before local midnight (from 16:00)
+  min_hours_to_end: 0.5           # stop 30 min before midnight — thin books, no chase
   min_no_price: 0.90              # densest profitable band ~0.90–0.985
   max_no_price: 0.98              # avoid tiny 1–2¢ wins / buying NO too rich
   min_net_edge: 0.02              # with p_no=0.99 ⇒ effective NO ≲ 0.97
